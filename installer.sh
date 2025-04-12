@@ -43,9 +43,17 @@ else
     sudo apt install -y python3-pip
 fi
 
-# Install Python dependencies
-echo "Installing Python dependencies..."
-sudo pip3 install -r "$INSTALL_DIR/requirements.txt"
+# Create a virtual environment
+echo "Creating a virtual environment..."
+VENV_DIR="$INSTALL_DIR/venv"
+python3 -m venv "$VENV_DIR"
+
+# Activate the virtual environment and install dependencies
+echo "Activating the virtual environment and installing dependencies..."
+source "$VENV_DIR/bin/activate"
+pip install --upgrade pip
+pip install -r "$INSTALL_DIR/requirements.txt"
+deactivate
 
 # Create a systemd service file
 SERVICE_FILE="/etc/systemd/system/mbus-mqtt-gateway.service"
@@ -60,7 +68,7 @@ After=network.target
 Type=simple
 User=$(whoami)
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/python3 $INSTALL_DIR/run.py
+ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/run.py
 Restart=on-failure
 
 [Install]
