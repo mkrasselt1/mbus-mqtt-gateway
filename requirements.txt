@@ -1,4 +1,4 @@
 flask
 paho-mqtt
 MBusSerial
-pyMeterBus
+pymeterbus
