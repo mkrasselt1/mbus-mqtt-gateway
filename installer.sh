@@ -16,8 +16,23 @@ else
     sudo apt install -y git
 fi
 
+# Ensure Python 3 full package is installed
+if command_exists python3; then
+    echo "Python 3 is already installed."
+else
+    echo "Python 3 is not installed. Installing Python 3 full package..."
+    sudo apt install -y python3-full
+fi
+
+if command_exists pip3; then
+    echo "pip is already installed."
+else
+    echo "pip is not installed. Installing pip..."
+    sudo apt install -y python3-pip
+fi
+
 # Clone the repository
-REPO_URL="https://github.com/mkrasselt1/mbus-mqtt-gateway.git"
+REPO_URL="https://github.com/your-username/mbus-mqtt-gateway.git"
 INSTALL_DIR="/opt/mbus-mqtt-gateway"
 
 if [ -d "$INSTALL_DIR" ]; then
@@ -26,21 +41,6 @@ if [ -d "$INSTALL_DIR" ]; then
 else
     echo "Cloning the repository..."
     sudo git clone "$REPO_URL" "$INSTALL_DIR"
-fi
-
-# Install Python and pip if not already installed
-if command_exists python3; then
-    echo "Python 3 is already installed."
-else
-    echo "Python 3 is not installed. Installing Python 3..."
-    sudo apt install -y python3
-fi
-
-if command_exists pip3; then
-    echo "pip is already installed."
-else
-    echo "pip is not installed. Installing pip..."
-    sudo apt install -y python3-pip
 fi
 
 # Create a virtual environment
