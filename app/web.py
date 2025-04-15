@@ -11,6 +11,8 @@ def index():
         config.data["mqtt_port"] = int(request.form["mqtt_port"])
         config.data["mqtt_topic"] = request.form["mqtt_topic"]
         config.data["mbus_port"] = request.form["mbus_port"]
+        config.data["mqtt_username"] = request.form["mqtt_username"]
+        config.data["mqtt_password"] = request.form["mqtt_password"]
         config.save()
     return render_template("index.html", config=config.data)
 
