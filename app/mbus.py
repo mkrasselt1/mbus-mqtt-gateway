@@ -1,6 +1,6 @@
 import time
 import json
-from pymeterbus.mbus import MBusSerial
+from pyMeterBus import meterbus
 from app.mqtt import MQTTClient
 
 
@@ -14,7 +14,7 @@ class MBusClient:
         """
         self.port = port
         self.baudrate = baudrate
-        self.mbus_master = MBusSerial(self.port, self.baudrate)
+        self.mbus_master = meterbus(self.port, self.baudrate)
         self.devices = []  # List of detected M-Bus devices
         self.mqtt_client = mqtt_client
 
