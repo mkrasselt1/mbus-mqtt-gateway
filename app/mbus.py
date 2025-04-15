@@ -1,6 +1,7 @@
 import time
 import json
-from pyMeterBus import meterbus
+import serial
+import meterbus
 from app.mqtt import MQTTClient
 
 
