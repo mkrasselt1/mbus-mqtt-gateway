@@ -8,13 +8,19 @@ import json
 def start_mbus_to_mqtt():
     config = Config()
     mbus_client = MBusClient(config.data["mbus_port"])
-    mqtt_client = MQTTClient(config.data["mqtt_broker"], config.data["mqtt_port"], config.data["mqtt_topic"])
+    mqtt_client = MQTTClient(
+        config.data["mqtt_broker"],
+        config.data["mqtt_port"],
+        username=config.data["mqtt_username"],
+        password=config.data["mqtt_password"],
+        topic_prefix=config.data["mqtt_topic"]
+    )
     mqtt_client.connect()
 
     while True:
         data = mbus_client.read_data()
         mqtt_client.publish(json.dumps(data))
-
+        
 if __name__ == "__main__":
     Process(target=start_mbus_to_mqtt).start()
     app.run(host="0.0.0.0", port=5000)
