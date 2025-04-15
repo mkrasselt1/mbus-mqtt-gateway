@@ -7,7 +7,6 @@ import json
 
 def start_mbus_to_mqtt():
     config = Config()
-    mbus_client = MBusClient(config.data["mbus_port"])
     mqtt_client = MQTTClient(
         config.data["mqtt_broker"],
         config.data["mqtt_port"],
@@ -16,6 +15,9 @@ def start_mbus_to_mqtt():
         topic_prefix=config.data["mqtt_topic"]
     )
     mqtt_client.connect()
+
+    # Pass the mqtt_client to MBusClient
+    mbus_client = MBusClient(config.data["mbus_port"], mqtt_client)
 
     while True:
         data = mbus_client.read_data()
