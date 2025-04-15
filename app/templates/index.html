@@ -18,6 +18,12 @@
         <label for="mqtt_topic">MQTT Topic:</label>
         <input type="text" id="mqtt_topic" name="mqtt_topic" value="{{ config['mqtt_topic'] }}" required>
         <br>
+        <label for="mqtt_username">MQTT Username:</label>
+        <input type="text" id="mqtt_username" name="mqtt_username" value="{{ config['mqtt_username'] }}">
+        <br>
+        <label for="mqtt_password">MQTT Password:</label>
+        <input type="password" id="mqtt_password" name="mqtt_password" value="{{ config['mqtt_password'] }}">
+        <br>
         <label for="mbus_port">M-Bus Port:</label>
         <input type="text" id="mbus_port" name="mbus_port" value="{{ config['mbus_port'] }}" required>
         <br>
