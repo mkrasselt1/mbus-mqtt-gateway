@@ -3,7 +3,6 @@ from multiprocessing import Process
 from app.mqtt import MQTTClient
 from app.web import app
 from app.config import Config
-import json
 import socket
 import time
 import uuid
@@ -27,7 +26,6 @@ def start_mbus_to_mqtt():
         #mqtt_client.publish(json.dumps(data))
         
 def get_local_ip():
-    """Ermittelt die lokale IP-Adresse."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
@@ -39,26 +37,8 @@ def get_local_ip():
     return ip
 
 def get_mac():
-    """Gibt die MAC-Adresse des ersten Netzwerkadapters als String zurück."""
     mac = uuid.getnode()
     return ':'.join(f'{(mac >> ele) & 0xff:02x}' for ele in range(40, -1, -8))
-
-def publish_ha_ip_discovery(mqtt_client, topic_prefix, mac):
-    """Veröffentlicht Home Assistant Discovery für die IP-Adresse."""
-    discovery_topic = f"homeassistant/sensor/{topic_prefix}_{mac}_ip/config"
-    payload = {
-        "name": "Gateway IP",
-        "state_topic": f"{topic_prefix}/system/{mac}/ip",
-        "unique_id": f"{topic_prefix}_{mac}_ip",
-        "icon": "mdi:ip-network",
-        "device": {
-            "identifiers": [f"{topic_prefix}_{mac}_gateway"],
-            "name": "MBus MQTT Gateway",
-            "manufacturer": "Custom",
-            "model": "mbus-mqtt-gateway"
-        }
-    }
-    mqtt_client.publish(discovery_topic, json.dumps(payload))
 
 def publish_ip_loop():
     config = Config()
@@ -74,12 +54,12 @@ def publish_ip_loop():
     print("[DEBUG] MQTT-Verbindung hergestellt.")
     mac = get_mac().replace(":", "")
     print(f"[DEBUG] Verwende MAC-Adresse: {mac}")
-    publish_ha_ip_discovery(mqtt_client, config.data["mqtt_topic"], mac)
+    mqtt_client.publish_ip_discovery(mac)
     print("[DEBUG] Home Assistant Discovery für IP veröffentlicht.")
     while True:
         ip = get_local_ip()
-        topic = f"{config.data['mqtt_topic']}/system/{mac}/ip"
-        print(f"[DEBUG] Sende IP {ip} an Topic {topic}")
+        topic = f"system/{mac}/ip"
+        print(f"[DEBUG] Sende IP {ip} an Topic {mqtt_client.topic_prefix}/{topic}")
         mqtt_client.publish(topic, ip)
         time.sleep(60)
 
