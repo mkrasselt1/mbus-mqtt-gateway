@@ -69,12 +69,18 @@ def publish_ip_loop():
         password=config.data["mqtt_password"],
         topic_prefix=config.data["mqtt_topic"]
     )
+    print(f"[DEBUG] Verbinde zu MQTT-Broker {config.data['mqtt_broker']}:{config.data['mqtt_port']} ...")
     mqtt_client.connect()
+    print("[DEBUG] MQTT-Verbindung hergestellt.")
     mac = get_mac().replace(":", "")
+    print(f"[DEBUG] Verwende MAC-Adresse: {mac}")
     publish_ha_ip_discovery(mqtt_client, config.data["mqtt_topic"], mac)
+    print("[DEBUG] Home Assistant Discovery für IP veröffentlicht.")
     while True:
         ip = get_local_ip()
-        mqtt_client.publish(f"{config.data['mqtt_topic']}/system/{mac}/ip", ip)
+        topic = f"{config.data['mqtt_topic']}/system/{mac}/ip"
+        print(f"[DEBUG] Sende IP {ip} an Topic {topic}")
+        mqtt_client.publish(topic, ip)
         time.sleep(60)
 
 if __name__ == "__main__":
