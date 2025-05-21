@@ -1,5 +1,5 @@
 from multiprocessing import Process
-from app.mbus import MBusClient
+#from app.mbus import MBusClient
 from app.mqtt import MQTTClient
 from app.web import app
 from app.config import Config
@@ -20,7 +20,7 @@ def start_mbus_to_mqtt():
     mqtt_client.connect()
 
     # Pass the mqtt_client to MBusClient
-    mbus_client = MBusClient(config.data["mbus_port"], mqtt_client)
+    #mbus_client = MBusClient(config.data["mbus_port"], mqtt_client)
 
     #while True:
         #data = mbus_client.read_data()
@@ -78,6 +78,6 @@ def publish_ip_loop():
         time.sleep(60)
 
 if __name__ == "__main__":
-    Process(target=start_mbus_to_mqtt).start()
+    #Process(target=start_mbus_to_mqtt).start()
     Process(target=publish_ip_loop).start()
     app.run(host="0.0.0.0", port=5000)
