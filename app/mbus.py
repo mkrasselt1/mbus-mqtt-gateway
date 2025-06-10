@@ -15,7 +15,8 @@ class MBusClient:
         """
         self.port = port
         self.baudrate = baudrate
-        self.mbus_master = meterbus(self.port, self.baudrate)
+        #self.mbus_master = meterbus(self.port, self.baudrate)
+        self.mbus_master = meterbus.MBusSerial(self.port, self.baudrate)
         self.devices = []  # List of detected M-Bus devices
         self.mqtt_client = mqtt_client
 
