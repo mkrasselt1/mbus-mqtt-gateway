@@ -95,13 +95,13 @@ class MBusClient:
                         'records': recs
                     }
 
-                    self.publish_meter_data(address, ydata)
-
+                    return ydata
                 elif frame is not None:
                     print(frame.to_JSON())
 
         except serial.serialutil.SerialException as e:
             print(e)
+        return None
 
     def publish_homeassistant_discovery(self, address, data):
         """
