@@ -15,8 +15,10 @@ class MBusClient:
         """
         self.port = port
         self.baudrate = baudrate
-        #self.mbus_master = meterbus(self.port, self.baudrate)
-        self.mbus_master = meterbus.MBusSerial(self.port, self.baudrate)
+        # Set up serial connection
+        ser = serial.Serial(self.port, self.baudrate, timeout=1)
+        # Create MBusSerial object
+        self.mbus_master = MBusSerial(ser)
         self.devices = []  # List of detected M-Bus devices
         self.mqtt_client = mqtt_client
 
@@ -29,15 +31,16 @@ class MBusClient:
         self.mbus_master.connect()
         detected_devices = []
 
-        # Iterate over potential secondary addresses (0-255)
+        # Iterate over potential primary addresses (0-255)
         for address in range(256):
+            self.mbus_master.send_ping_frame(ser, address)
             try:
-                self.mbus_master.select_secondary_address(str(address))
-                print(f"Device found at address: {address}")
-                detected_devices.append(address)
-            except Exception:
-                pass  # No device found at this address
-
+                frame = self.mbus_master.load(self.mbus_master.recv_frame(ser, 1))
+                if isinstance(frame, self.mbus_master.TelegramACK):
+                    print(f"Device found at address: {address}")
+                    detected_devices.append(address)
+            except meterbus.MBusFrameDecodeError:
+                pass
         self.mbus_master.disconnect()
         return detected_devices
 
@@ -49,10 +52,24 @@ class MBusClient:
         """
         try:
             self.mbus_master.connect()
+            # Send a request to the device at the given address (assuming secondary addressing)
+            # If your devices are using primary addressing, adjust accordingly.
             self.mbus_master.select_secondary_address(str(address))
             frame = self.mbus_master.send_request_frame()
-            data = self.mbus_master.interpret_response_frame(frame)
+            reply = self.mbus_master.recv_frame()
+            # Parse the reply frame
+            parsed = meterbus.frame_data_parse(reply)
+            # Optionally, convert to dict if parsed is not already a dictionary
+            if hasattr(parsed, 'to_JSON'):
+                data = json.loads(parsed.to_JSON())
+            elif isinstance(parsed, dict):
+                data = parsed
+            else:
+                # Fallback: try to convert to string
+                data = {"raw": str(parsed)}
             print(f"Data from device {address}: {data}")
+            # Push the parsed data to MQTT
+            self.publish_meter_data(address, data)
             return data
         except Exception as e:
             print(f"Failed to read data from device {address}: {e}")
