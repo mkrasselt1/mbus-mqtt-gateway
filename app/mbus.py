@@ -113,7 +113,7 @@ class MBusClient:
         Perform a one-time scan for devices on startup, then continuously read data from all detected devices.
         """
         # Scan for devices on startup
-        self.devices = self.scan_devices()
+        self.scan_devices()
         
         print(f"Detected devices: {self.devices}")
 
