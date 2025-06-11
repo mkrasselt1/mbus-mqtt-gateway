@@ -48,50 +48,91 @@ class MBusClient:
         :return: Decoded data from the device.
         """
         try:
-            self.mbus_master.connect()
-            # Send a request to the device at the given address (assuming secondary addressing)
-            # If your devices are using primary addressing, adjust accordingly.
-            self.mbus_master.select_secondary_address(str(address))
-            frame = self.mbus_master.send_request_frame()
-            reply = self.mbus_master.recv_frame()
-            # Parse the reply frame
-            parsed = meterbus.frame_data_parse(reply)
-            # Optionally, convert to dict if parsed is not already a dictionary
-            if hasattr(parsed, 'to_JSON'):
-                data = json.loads(parsed.to_JSON())
-            elif isinstance(parsed, dict):
-                data = parsed
-            else:
-                # Fallback: try to convert to string
-                data = {"raw": str(parsed)}
-            print(f"Data from device {address}: {data}")
-            # Push the parsed data to MQTT
-            self.publish_meter_data(address, data)
-            return data
-        except Exception as e:
-            print(f"Failed to read data from device {address}: {e}")
-        finally:
-            self.mbus_master.disconnect()
+            ibt = meterbus.inter_byte_timeout(self.baudrate)
+            with serial.serial_for_url(self.port,
+                            self.baudrate, 8, 'E', 1,
+                            inter_byte_timeout=ibt,
+                            timeout=1) as ser:
+                frame = None
+
+                if meterbus.is_primary_address(address):
+                    if self.ping_address(ser, address, 2, read_echo=False):
+                        meterbus.send_request_frame(ser, address, read_echo=False)
+                        frame = meterbus.load(
+                            meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
+                    else:
+                        print("no reply")
+
+                elif meterbus.is_secondary_address(address):
+                    if self.ping_address(ser, meterbus.ADDRESS_NETWORK_LAYER, 2, read_echo=False):
+                        meterbus.send_select_frame(ser, address, False)
+                        try:
+                            frame = meterbus.load(meterbus.recv_frame(ser, 1))
+                        except meterbus.MBusFrameDecodeError as e:
+                            frame = e.value
+
+                        # Ensure that the select frame request was handled by the slave
+                        assert isinstance(frame, meterbus.TelegramACK)
+
+                        frame = None
+
+                        meterbus.send_request_frame(
+                            ser, meterbus.ADDRESS_NETWORK_LAYER, read_echo=False)
+
+                        time.sleep(0.3)
+
+                        frame = meterbus.load(
+                            meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
+                    else:
+                        print("no reply")
+
+                if frame is not None:
+                    recs = []
+                    for rec in frame.records:
+                        recs.append({
+                            'value': rec.value,
+                            'unit': rec.unit
+                        })
+
+                    ydata = {
+                        'manufacturer': frame.body.bodyHeader.manufacturer_field.decodeManufacturer,
+                        'identification': ''.join(map('{:02x}'.format, frame.body.bodyHeader.id_nr)),
+                        'access_no': frame.body.bodyHeader.acc_nr_field.parts[0],
+                        'medium':  frame.body.bodyHeader.measure_medium_field.parts[0],
+                        'records': recs
+                    }
+
+                    self.publish_meter_data(address, ydata)
+
+                elif frame is not None:
+                    print(frame.to_JSON())
+
+        except serial.serialutil.SerialException as e:
+            print(e)
 
     def publish_homeassistant_discovery(self, address, data):
         """
-        Publish Home Assistant MQTT auto-discovery configuration for a specific device.
+        Publish Home Assistant MQTT auto-discovery configuration for each record of a specific device.
         :param address: The address of the M-Bus device.
         :param data: The data structure containing the meter's attributes.
         """
-        for key, value in data.items():
+        # records ist eine Liste von dicts mit 'value' und 'unit'
+        records = data.get("records", [])
+        for idx, record in enumerate(records):
+            key = f"record_{idx}"
             discovery_topic = f"homeassistant/sensor/mbus_meter_{address}_{key}/config"
             payload = {
                 "name": f"MBus Meter {address} {key}",
                 "state_topic": f"mbus/meter/{address}",
-                "unit_of_measurement": value.get("unit", ""),
-                "value_template": f"{{{{ value_json.{key} }}}}",
+                "unit_of_measurement": record.get("unit", ""),
+                "value_template": f"{{{{ value_json.records[{idx}].value }}}}",
                 "unique_id": f"mbus_meter_{address}_{key}",
                 "device": {
                     "identifiers": [f"mbus_meter_{address}"],
                     "name": f"MBus Meter {address}",
-                    "manufacturer": "Unknown",
-                    "model": "Unknown",
+                    "manufacturer": data.get("manufacturer", "Unknown"),
+                    "model": data.get("medium", "Unknown"),
+                    "sw_version": data.get("identification", ""),
                 },
             }
             self.mqtt_client.publish(discovery_topic, json.dumps(payload))
