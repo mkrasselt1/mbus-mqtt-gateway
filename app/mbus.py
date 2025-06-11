@@ -25,27 +25,21 @@ class MBusClient:
         :return: A list of secondary addresses (device IDs) of detected devices.
         """
         print("Scanning for M-Bus devices...")
-        detected_devices = []
-        # Iterate over potential primary addresses (0-255)
-        with serial.serial_for_url(
-                self.port,
-                baudrate=self.baudrate,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_EVEN,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=1
-            ) as ser:
-            mbus = meterbus.MBusSerial(ser)
-            for address in range(256):
-                if self.ping_address(ser, address, 1, True):
-                    meterbus.send_request_frame(ser, address, read_echo=True)
-                    frame = meterbus.load(
-                        meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
-                    print(f"Device found at address: {address}")
-                    detected_devices.append(address)
-                else:
-                    print(f"no Device found at address: {address}")                    
-        return detected_devices
+        try:
+            with serial.serial_for_url(self.port,
+                            self.baudrate, 8, 'E', 1, timeout=1) as ser:
+
+                # Ensure we are at the beginning of the records
+                self.init_slaves(ser, False)
+
+                self.mbus_scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF", False)
+
+        except serial.serialutil.SerialException as e:
+            print(e)
+
+            if not self.devices:
+                print("No devices found during startup scan.")
+                return
 
     def read_data_from_device(self, address):
         """
@@ -120,11 +114,7 @@ class MBusClient:
         """
         # Scan for devices on startup
         self.devices = self.scan_devices()
-
-        if not self.devices:
-            print("No devices found during startup scan.")
-            return
-
+        
         print(f"Detected devices: {self.devices}")
 
         # Publish Home Assistant auto-discovery for all detected devices
@@ -141,6 +131,7 @@ class MBusClient:
                     self.publish_meter_data(device, data)
             time.sleep(60)  # Wait 60 seconds before reading again
 
+    
     def ping_address(self, ser, address, retries=5, read_echo=False):
         for i in range(0, retries + 1):
             meterbus.send_ping_frame(ser, address, read_echo)
@@ -148,9 +139,66 @@ class MBusClient:
                 frame = meterbus.load(meterbus.recv_frame(ser, 1))
                 if isinstance(frame, meterbus.TelegramACK):
                     return True
-            except meterbus.MBusFrameDecodeError as e:
+            except meterbus.MBusFrameDecodeError:
                 pass
 
             time.sleep(0.5)
 
         return False
+
+    def init_slaves(self, ser, read_echo=False):
+        if not self.ping_address(ser, meterbus.ADDRESS_NETWORK_LAYER, 0, read_echo):
+            return self.ping_address(ser, meterbus.ADDRESS_BROADCAST_NOREPLY, 0, read_echo)
+        else:
+            return True
+
+        return False
+
+    def mbus_scan_secondary_address_range(self, ser, pos, mask, read_echo=False):
+        # F character is a wildcard
+        if mask[pos].upper() == 'F':
+            l_start, l_end = 0, 9
+        else:
+            if pos < 15:
+                self.mbus_scan_secondary_address_range(ser, pos+1, mask, read_echo)
+            else:
+                l_start = l_end = ord(mask[pos]) - ord('0')
+
+        if mask[pos].upper() == 'F' or pos == 15:
+            for i in range(l_start, l_end+1):  # l_end+1 is to include l_end val
+                new_mask = (mask[:pos] + "{0:1X}".format(i) + mask[pos+1:]).upper()
+                val, match, manufacturer = self.mbus_probe_secondary_address(ser, new_mask, read_echo)
+                if val is True:
+                    print("Device found with id {0} ({1}), using mask {2}".format(
+                    match, manufacturer, new_mask))
+                    self.devices.append(val)  # Store the found device
+                elif val is False:  # Collision
+                    self.mbus_scan_secondary_address_range(ser, pos+1, new_mask, read_echo)
+
+    def mbus_probe_secondary_address(self, ser, mask, read_echo=False):
+        # False -> Collision
+        # None -> No reply
+        # True -> Single reply
+        meterbus.send_select_frame(ser, mask, read_echo)
+        try:
+            frame = meterbus.load(meterbus.recv_frame(ser, 1))
+        except meterbus.MBusFrameDecodeError as e:
+            frame = e.value
+
+        if isinstance(frame, meterbus.TelegramACK):
+            meterbus.send_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER, read_echo=read_echo)
+            time.sleep(0.5)
+
+            frame = None
+            try:
+                frame = meterbus.load(
+                    meterbus.recv_frame(ser))
+            except meterbus.MBusFrameDecodeError:
+                pass
+
+            if isinstance(frame, meterbus.TelegramLong):
+                return True, frame.secondary_address, frame.manufacturer
+
+            return None, None, None
+
+        return frame, None, None
