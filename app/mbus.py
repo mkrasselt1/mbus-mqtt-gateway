@@ -56,6 +56,7 @@ class MBusClient:
                 frame = None
 
                 if meterbus.is_primary_address(address):
+                    print(f"Reading data from primary address {address}")
                     if self.ping_address(ser, address, 2, read_echo=False):
                         meterbus.send_request_frame(ser, address, read_echo=False)
                         frame = meterbus.load(
@@ -64,27 +65,19 @@ class MBusClient:
                         print("no reply")
 
                 elif meterbus.is_secondary_address(address):
-                    if self.ping_address(ser, meterbus.ADDRESS_NETWORK_LAYER, 2, read_echo=False):
-                        meterbus.send_select_frame(ser, address, False)
-                        try:
-                            frame = meterbus.load(meterbus.recv_frame(ser, 1))
-                        except meterbus.MBusFrameDecodeError as e:
-                            frame = e.value
+                    print(f"Reading data from secondary address {address}")
+                    meterbus.send_select_frame(ser, address, False)
+                    try:
+                        frame = meterbus.load(meterbus.recv_frame(ser, 1))
+                    except meterbus.MBusFrameDecodeError as e:
+                        frame = e.value
 
-                        # Ensure that the select frame request was handled by the slave
-                        assert isinstance(frame, meterbus.TelegramACK)
+                    # Ensure that the select frame request was handled by the slave
+                    assert isinstance(frame, meterbus.TelegramACK)
 
-                        frame = None
-
-                        meterbus.send_request_frame(
-                            ser, meterbus.ADDRESS_NETWORK_LAYER, read_echo=False)
-
-                        time.sleep(0.3)
-
-                        frame = meterbus.load(
-                            meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
-                    else:
-                        print("no reply")
+                    meterbus.send_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER, read_echo=False)
+                    time.sleep(0.3)
+                    frame = meterbus.load(meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
 
                 if frame is not None:
                     recs = []
