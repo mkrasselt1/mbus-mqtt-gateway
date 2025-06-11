@@ -6,7 +6,7 @@ from app.mqtt import MQTTClient
 
 
 class MBusClient:
-    def __init__(self, port, mqtt_client, baudrate=2400):
+    def __init__(self, port, baudrate=2400, mqtt_client = None):
         """
         Initialize the M-Bus client with the given serial port and baudrate.
         :param port: Serial port where the M-Bus master is connected (e.g., '/dev/ttyUSB0').
@@ -17,6 +17,7 @@ class MBusClient:
         self.baudrate = baudrate
         self.devices = []  # List of detected M-Bus devices
         self.mqtt_client = mqtt_client
+        print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
 
     def scan_devices(self):
         """
@@ -24,20 +25,26 @@ class MBusClient:
         :return: A list of secondary addresses (device IDs) of detected devices.
         """
         print("Scanning for M-Bus devices...")
-        self.mbus_master.connect()
         detected_devices = []
         # Iterate over potential primary addresses (0-255)
-        with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
+        with serial.serial_for_url(
+                self.port,
+                baudrate=self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_EVEN,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=1
+            ) as ser:
             mbus = meterbus.MBusSerial(ser)
             for address in range(256):
-                try:
-                    mbus.send_ping_frame(ser, address)
-                    frame = mbus.load(mbus.recv_frame(ser, 1))
-                    if isinstance(frame, mbus.TelegramACK):
-                        print(f"Device found at address: {address}")
-                        detected_devices.append(address)
-                except Exception:
-                    pass  # No device found at this address
+                if self.ping_address(ser, address, 1, True):
+                    meterbus.send_request_frame(ser, address, read_echo=True)
+                    frame = meterbus.load(
+                        meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
+                    print(f"Device found at address: {address}")
+                    detected_devices.append(address)
+                else:
+                    print(f"no Device found at address: {address}")                    
         return detected_devices
 
     def read_data_from_device(self, address):
@@ -133,3 +140,17 @@ class MBusClient:
                 if data:
                     self.publish_meter_data(device, data)
             time.sleep(60)  # Wait 60 seconds before reading again
+
+    def ping_address(self, ser, address, retries=5, read_echo=False):
+        for i in range(0, retries + 1):
+            meterbus.send_ping_frame(ser, address, read_echo)
+            try:
+                frame = meterbus.load(meterbus.recv_frame(ser, 1))
+                if isinstance(frame, meterbus.TelegramACK):
+                    return True
+            except meterbus.MBusFrameDecodeError as e:
+                pass
+
+            time.sleep(0.5)
+
+        return False

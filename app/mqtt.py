@@ -9,18 +9,33 @@ class MQTTClient:
         self.password = password
         self.topic_prefix = topic_prefix
         self.client = mqtt.Client()
+        self.connected = False
 
         if self.username and self.password:
             self.client.username_pw_set(self.username, self.password)
 
     def connect(self):
-        self.client.connect(self.broker, self.port)
-        self.client.loop_start()
+        try:
+            self.client.connect(self.broker, self.port)
+            self.client.loop_start()
+            self.connected = True
+        except Exception as e:
+            print(f"[WARN] MQTT-Verbindung fehlgeschlagen: {e}")
+            self.connected = False
 
     def publish(self, topic, payload):
-        full_topic = f"{self.topic_prefix}/{topic}"
-        self.client.publish(full_topic, payload)
-        print(f"[DEBUG] Published to topic {full_topic}: {payload}")
+        if not self.connected:
+            try:
+                self.connect()
+            except Exception:
+                print(f"[WARN] MQTT-Verbindung nicht möglich, Nachricht verworfen: {topic}")
+                return
+        try:
+            full_topic = f"{self.topic_prefix}/{topic}"
+            self.client.publish(full_topic, payload)
+            print(f"[DEBUG] Published to topic {full_topic}: {payload}")
+        except Exception as e:
+            print(f"[WARN] MQTT publish fehlgeschlagen ({topic}): {e}")
 
     def publish_discovery(self, component, object_id, payload):
         """

@@ -21,4 +21,5 @@ def index():
         config.data["mqtt_password"] = request.form.get("mqtt_password", "")
         config.save()
     serial_ports = get_serial_ports()
+    serial_ports.append(config.data["mbus_port"]) # Ensure the current M-Bus port is included
     return render_template("index.html", config=config.data, serial_ports=serial_ports)
