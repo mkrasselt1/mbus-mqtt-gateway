@@ -212,7 +212,7 @@ class MBusClient:
                 if val is True:
                     print("Device found with id {0} ({1}), using mask {2}".format(
                     match, manufacturer, new_mask))
-                    self.devices.append(val)  # Store the found device
+                    self.devices.append(match)  # Store the found device
                 elif val is False:  # Collision
                     self.mbus_scan_secondary_address_range(ser, pos+1, new_mask, read_echo)
 
