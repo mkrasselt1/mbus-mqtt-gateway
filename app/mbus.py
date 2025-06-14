@@ -83,7 +83,7 @@ class MBusClient:
                     recs = []
                     for rec in frame.records:
                         recs.append({
-                            'value': rec.value,
+                            'value': str(rec.value),
                             'unit': rec.unit
                         })
 
