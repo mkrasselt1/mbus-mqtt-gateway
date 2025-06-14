@@ -138,13 +138,13 @@ class MBusClient:
         :param data: The decoded data from the meter.
         """
         topic = f"mbus/meter/{address}"
-        if(data.type is object):
+        if isinstance(data, dict):
             payload = json.dumps(data)
             self.mqtt_client.publish(topic, payload)
             print(f"Published data for device {address} to MQTT: {payload}")
         else:
             print(f"Data for device {address} is not in expected format, skipping publish.")
-            print(f"Data({data.type}): {data}")
+            print(f"Data({type(data)}): {data}")
 
     def start(self):
         """
