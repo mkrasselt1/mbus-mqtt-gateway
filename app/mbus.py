@@ -178,7 +178,7 @@ class MBusClient:
                 if data:
                     print(f"Read data from device {device}: {data}")
                     self.publish_meter_data(device, data)
-            time.sleep(60)  # Wait 60 seconds before reading again
+            time.sleep(10)  # Wait 10 seconds before reading again
 
     
     def ping_address(self, ser, address, retries=5, read_echo=False):
