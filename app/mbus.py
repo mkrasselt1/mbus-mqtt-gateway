@@ -162,6 +162,7 @@ class MBusClient:
             for device in self.devices:
                 data = self.read_data_from_device(device)
                 if data:
+                    print(f"Read data from device {device}: {data}")
                     self.publish_meter_data(device, data)
             time.sleep(60)  # Wait 60 seconds before reading again
 
