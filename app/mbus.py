@@ -83,7 +83,7 @@ class MBusClient:
                     recs = []
                     for rec in frame.records:
                         recs.append({
-                            'value': str(rec.value),
+                            'value': rec.value,
                             'unit': rec.unit
                         })
 
@@ -139,9 +139,19 @@ class MBusClient:
         """
         topic = f"mbus/meter/{address}"
         if isinstance(data, dict):
-            payload = json.dumps(data)
-            self.mqtt_client.publish(topic, payload)
-            print(f"Published data for device {address} to MQTT: {payload}")
+            import decimal
+            class DecimalEncoder(json.JSONEncoder):
+                def default(self, obj):
+                    if isinstance(obj, decimal.Decimal):
+                        return float(obj)
+                    return super().default(obj)
+
+            payload = json.dumps(data, cls=DecimalEncoder)
+            if self.mqtt_client is not None:
+                self.mqtt_client.publish(topic, payload)
+                print(f"Published data for device {address} to MQTT: {payload}")
+            else:
+                print("MQTT client is not initialized. Cannot publish data.")
         else:
             print(f"Data for device {address} is not in expected format, skipping publish.")
             print(f"Data({type(data)}): {data}")
