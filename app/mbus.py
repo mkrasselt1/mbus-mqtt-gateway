@@ -50,10 +50,10 @@ class MBusClient:
         :param address: The secondary address of the M-Bus device.
         :return: Decoded data from the device.
         """
-        print(f"Reading data from device with address {address}")
-        with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
-            frame = self.read_register(ser, address, 0x04, 0x6D)
-            print(f"Read register data: {frame.to_JSON()}")
+        #print(f"Reading data from device with address {address}")
+        #with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
+            #frame = self.read_register(ser, address, 0x04, 0x6D)
+            #print(f"Read register data: {frame.to_JSON()}")
             # Jetzt frame.records auswerten und publishen
         try:
             ibt = meterbus.inter_byte_timeout(self.baudrate)
