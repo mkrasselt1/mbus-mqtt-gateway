@@ -273,7 +273,7 @@ class MBusClient:
         meterbus.serial_send(ser, frame, read_echo)
         return frame
 
-    def send_selective_readout(ser, address, dib, vib):
+    def send_selective_readout(self, ser, address, dib, vib):
         """
         Sende ein SND_UD-Frame mit gewünschtem DIB/VIB an das Gerät.
         """
@@ -287,8 +287,8 @@ class MBusClient:
         snd_ud.body.bodyPayload = bytes([dib, vib])
         meterbus.serial_send(ser, snd_ud, read_echo=False)
 
-    def read_register(ser, address, dib, vib):
-        send_selective_readout(ser, address, dib, vib)
+    def read_register(self, ser, address, dib, vib):
+        self.send_selective_readout(ser, address, dib, vib)
         # Jetzt REQ_UD2 senden und Antwort lesen
         meterbus.send_request_frame(ser, address, read_echo=False)
         frame = meterbus.load(meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
