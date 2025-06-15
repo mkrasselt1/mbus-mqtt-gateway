@@ -289,6 +289,7 @@ class MBusClient:
         return frame
 
     def read_register(self, ser, address, dib, vib):
+        print(f"DIB: {dib} ({type(dib)}), VIB: {vib} ({type(vib)})")
         self.send_selective_readout(ser, address, dib, vib)
         # Jetzt REQ_UD2 senden und Antwort lesen
         meterbus.send_request_frame(ser, address, read_echo=False)
