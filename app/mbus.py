@@ -283,7 +283,7 @@ class MBusClient:
         ]
         snd_ud.header.aField.parts = [address]
         # DIB/VIB als User Data
-        snd_ud.body.bodyHeader.ciField.parts = [0x51]  # CI-Field für "selective readout"
+        snd_ud.body.bodyHeader.ci_field.parts = [0x51]  # CI-Field für "selective readout"
         snd_ud.body.bodyPayload = bytes([dib, vib])
         meterbus.serial_send(ser, snd_ud, read_echo=False)
 
