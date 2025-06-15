@@ -2,6 +2,9 @@ import time
 import json
 import serial
 import meterbus
+#from meterbus.telegram_short import TelegramShort
+        #from meterbus.defines import CONTROL_MASK_REQ_UD1, CONTROL_MASK_DIR_M2S
+        #from meterbus.serial import serial_send
 from app.mqtt import MQTTClient
 
 
@@ -58,7 +61,8 @@ class MBusClient:
                 if meterbus.is_primary_address(address):
                     print(f"Reading data from primary address {address}")
                     if self.ping_address(ser, address, 2, read_echo=False):
-                        meterbus.send_request_frame(ser, address, read_echo=False)
+                        #meterbus.send_request_frame(ser, address, read_echo=False)
+                        self.send_request_frame_ud1(ser, address, read_echo=False)
                         frame = meterbus.load(
                             meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
                     else:
@@ -178,7 +182,7 @@ class MBusClient:
                 if data:
                     print(f"Read data from device {device}: {data}")
                     self.publish_meter_data(device, data)
-            time.sleep(10)  # Wait 10 seconds before reading again
+            #time.sleep(10)  # Wait 10 seconds before reading again
 
     
     def ping_address(self, ser, address, retries=5, read_echo=False):
@@ -251,3 +255,15 @@ class MBusClient:
             return None, None, None
 
         return frame, None, None
+
+    def send_request_frame_ud1(ser, address, read_echo=False):
+        """
+        Sende einen REQ_UD1 (Class 2 Data) Request-Frame an die angegebene Adresse.
+        """
+        frame = meterbus.TelegramShort()
+        frame.header.cField.parts = [
+            meterbus.CONTROL_MASK_REQ_UD1 | meterbus.CONTROL_MASK_DIR_M2S  # 0x53
+        ]
+        frame.header.aField.parts = [address]
+        meterbus.serial_send(ser, frame, read_echo)
+        return frame
