@@ -102,6 +102,11 @@ class MBusClient:
                     return ydata
                 elif frame is not None:
                     print(frame.to_JSON())
+            
+            with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
+                frame = self.read_register(ser, address, 0x04, 0x6D)
+                print(f"Read register data: {frame.to_JSON()}")
+                # Jetzt frame.records auswerten und publishen
 
         except serial.serialutil.SerialException as e:
             print(e)
@@ -266,4 +271,25 @@ class MBusClient:
         ]
         frame.header.aField.parts = [address]
         meterbus.serial_send(ser, frame, read_echo)
+        return frame
+
+    def send_selective_readout(ser, address, dib, vib):
+        """
+        Sende ein SND_UD-Frame mit gewünschtem DIB/VIB an das Gerät.
+        """
+        snd_ud = meterbus.TelegramLong()
+        snd_ud.header.cField.parts = [
+            meterbus.CONTROL_MASK_SND_UD | meterbus.CONTROL_MASK_DIR_M2S
+        ]
+        snd_ud.header.aField.parts = [address]
+        # DIB/VIB als User Data
+        snd_ud.body.bodyHeader.ciField.parts = [0x51]  # CI-Field für "selective readout"
+        snd_ud.body.bodyPayload = bytes([dib, vib])
+        meterbus.serial_send(ser, snd_ud, read_echo=False)
+
+    def read_register(ser, address, dib, vib):
+        send_selective_readout(ser, address, dib, vib)
+        # Jetzt REQ_UD2 senden und Antwort lesen
+        meterbus.send_request_frame(ser, address, read_echo=False)
+        frame = meterbus.load(meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
         return frame
