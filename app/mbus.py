@@ -277,15 +277,16 @@ class MBusClient:
         """
         Sende ein SND_UD-Frame mit gewünschtem DIB/VIB an das Gerät.
         """
-        snd_ud = meterbus.TelegramLong()
-        snd_ud.header.cField.parts = [
+        frame = meterbus.TelegramLong()
+        frame.header.cField.parts = [
             meterbus.CONTROL_MASK_SND_UD | meterbus.CONTROL_MASK_DIR_M2S
         ]
-        snd_ud.header.aField.parts = [address]
+        frame.header.aField.parts = [address]
         # DIB/VIB als User Data
-        snd_ud.body.bodyHeader.ci_field.parts = [0x51]  # CI-Field für "selective readout"
-        snd_ud.body.bodyPayload = bytes([dib, vib])
-        meterbus.serial_send(ser, snd_ud, read_echo=False)
+        frame.body.bodyHeader.ci_field.parts = [0x51]  # CI-Field für "selective readout"
+        frame.body.bodyPayload = bytes([dib, vib])
+        meterbus.serial_send(ser, frame, read_echo=False)
+        return frame
 
     def read_register(self, ser, address, dib, vib):
         self.send_selective_readout(ser, address, dib, vib)
