@@ -2,11 +2,12 @@ import json
 import paho.mqtt.client as mqtt
 
 class MQTTClient:
-    def __init__(self, broker, port, username=None, password=None):
+    def __init__(self, broker, port, username=None, password=None, topic_prefix="mbus"):
         self.broker = broker
         self.port = port
         self.username = username
         self.password = password
+        self.topic_prefix = topic_prefix
         self.client = mqtt.Client()
         self.connected = False
 
@@ -30,8 +31,9 @@ class MQTTClient:
                 print(f"[WARN] MQTT-Verbindung nicht möglich, Nachricht verworfen: {topic}")
                 return
         try:
-            self.client.publish(topic, payload)
-            print(f"[DEBUG] Published to topic {topic}: {payload}")
+            full_topic = f"{self.topic_prefix}/{topic}"
+            self.client.publish(full_topic, payload)
+            print(f"[DEBUG] Published to topic {full_topic}: {payload}")
         except Exception as e:
             print(f"[WARN] MQTT publish fehlgeschlagen ({topic}): {e}")
 
@@ -49,14 +51,14 @@ class MQTTClient:
 
     # Optional: Convenience-Methode für IP-Sensor
     def publish_ip_discovery(self, mac):
-        object_id = f"mbus_{mac}_ip"
+        object_id = f"{self.topic_prefix}_{mac}_ip"
         payload = {
             "name": "Gateway IP",
-            "state_topic": f"mbus/system/{mac}/ip",
+            "state_topic": f"{self.topic_prefix}/system/{mac}/ip",
             "unique_id": object_id,
             "icon": "mdi:ip-network",
             "device": {
-                "identifiers": [f"mbus_{mac}_gateway"],
+                "identifiers": [f"{self.topic_prefix}_{mac}_gateway"],
                 "name": "MBus MQTT Gateway",
                 "manufacturer": "Custom",
                 "model": "mbus-mqtt-gateway"

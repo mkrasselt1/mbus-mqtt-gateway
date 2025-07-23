@@ -14,6 +14,7 @@ def start_mbus_to_mqtt():
         config.data["mqtt_port"],
         username=config.data["mqtt_username"],
         password=config.data["mqtt_password"],
+        topic_prefix=config.data["mqtt_topic"]
     )
     mqtt_client.connect()
 
@@ -45,7 +46,8 @@ def publish_ip_loop():
         config.data["mqtt_broker"],
         config.data["mqtt_port"],
         username=config.data["mqtt_username"],
-        password=config.data["mqtt_password"]
+        password=config.data["mqtt_password"],
+        topic_prefix=config.data["mqtt_topic"]
     )
     print(f"[DEBUG] Verbinde zu MQTT-Broker {config.data['mqtt_broker']}:{config.data['mqtt_port']} ...")
     mqtt_client.connect()
@@ -56,8 +58,8 @@ def publish_ip_loop():
     print("[DEBUG] Home Assistant Discovery für IP veröffentlicht.")
     while True:
         ip = get_local_ip()
-        topic = f"mbus/system/{mac}/ip"
-        print(f"[DEBUG] Sende IP {ip} an Topic {topic}")
+        topic = f"system/{mac}/ip"
+        print(f"[DEBUG] Sende IP {ip} an Topic {mqtt_client.topic_prefix}/{topic}")
         mqtt_client.publish(topic, ip)
         time.sleep(60)
 
