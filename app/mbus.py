@@ -65,10 +65,18 @@ class MBusClient:
                 # Standard-Records sammeln
                 recs = []
                 for idx, rec in enumerate(frame.records):
+                    # Bestimme Namen basierend auf der Einheit
+                    name = self.get_sensor_name_from_unit(rec.unit, idx)
+                    
+                    # Wert auf 4 Nachkommastellen begrenzen falls es eine Zahl ist
+                    value = rec.value
+                    if isinstance(value, (float, int)):
+                        value = round(float(value), 4)
+                    
                     recs.append({
-                        'value': rec.value,
+                        'value': value,
                         'unit': rec.unit,
-                        'name': f"Standard Record {idx}",
+                        'name': name,
                         'function': getattr(rec, 'function_field', {}).get('parts', [None])[0] if hasattr(rec, 'function_field') else None
                     })
 
@@ -121,6 +129,71 @@ class MBusClient:
         
         return frame
 
+    def get_sensor_name_from_unit(self, unit, index):
+        """
+        Bestimmt einen aussagekräftigen Sensor-Namen basierend auf der Einheit.
+        :param unit: Die Einheit des Sensors (z.B. "W", "kWh", "V", "A")
+        :param index: Der Index falls kein Name gefunden wird
+        :return: Ein aussagekräftiger Name für den Sensor
+        """
+        if not unit or unit.lower() == "none":
+            return f"Zählerstand {index}"
+        
+        unit_lower = unit.lower()
+        
+        # Energie-Einheiten
+        if unit_lower in ["kwh", "wh", "mwh", "gwh"]:
+            return f"Energie ({unit})"
+        elif unit_lower in ["kvarh", "varh"]:
+            return f"Blindenergie ({unit})"
+        
+        # Leistungs-Einheiten
+        elif unit_lower in ["w", "kw", "mw", "gw"]:
+            return f"Wirkleistung ({unit})"
+        elif unit_lower in ["var", "kvar", "mvar"]:
+            return f"Blindleistung ({unit})"
+        elif unit_lower in ["va", "kva", "mva"]:
+            return f"Scheinleistung ({unit})"
+        
+        # Elektrische Größen
+        elif unit_lower in ["v", "kv", "mv"]:
+            return f"Spannung ({unit})"
+        elif unit_lower in ["a", "ma", "ka"]:
+            return f"Strom ({unit})"
+        elif unit_lower in ["hz", "khz"]:
+            return f"Frequenz ({unit})"
+        elif unit_lower in ["°", "deg", "degree"]:
+            return f"Phasenwinkel ({unit})"
+        
+        # Faktoren und Verhältnisse
+        elif unit_lower in ["", "1", "none"] or "cos" in unit_lower:
+            if "cos" in unit_lower:
+                return "Leistungsfaktor (cos φ)"
+            else:
+                return f"Faktor {index}"
+        
+        # Volumetrische Einheiten
+        elif unit_lower in ["m³", "m3", "l", "liter"]:
+            return f"Volumen ({unit})"
+        elif unit_lower in ["m³/h", "m3/h", "l/h", "l/min"]:
+            return f"Volumenstrom ({unit})"
+        
+        # Temperatur
+        elif unit_lower in ["°c", "°f", "k", "celsius", "fahrenheit", "kelvin"]:
+            return f"Temperatur ({unit})"
+        
+        # Druck
+        elif unit_lower in ["bar", "mbar", "pa", "kpa", "mpa"]:
+            return f"Druck ({unit})"
+        
+        # Zeit
+        elif unit_lower in ["s", "min", "h", "d", "sec", "hour", "day"]:
+            return f"Zeit ({unit})"
+        
+        # Fallback: Generischer Name mit Einheit
+        else:
+            return f"Messwert {index} ({unit})"
+
     def publish_homeassistant_discovery(self, address, data):
         """
         Publish Home Assistant MQTT auto-discovery configuration for each record of a specific device.
@@ -138,10 +211,12 @@ class MBusClient:
             key = f"record_{idx}"
             object_id = f"mbus_meter_{address}_{key}"
             
+            # Unit of measurement: nur setzen wenn nicht 'none' oder leer
+            unit = record.get("unit", "")
+            
             payload = {
                 "name": f"{sensor_name} ({address})",
                 "state_topic": f"{self.mqtt_client.topic_prefix}/meter/{address}",
-                "unit_of_measurement": record.get("unit", ""),
                 "value_template": f"{{{{ value_json.records[{idx}].value }}}}",
                 "unique_id": object_id,
                 "device": {
@@ -152,6 +227,10 @@ class MBusClient:
                     "sw_version": data.get("identification", ""),
                 },
             }
+            
+            # Unit nur hinzufügen wenn sie nicht 'none' oder leer ist
+            if unit and unit.lower() != "none":
+                payload["unit_of_measurement"] = unit
             
             # Setze passende Icons basierend auf dem Sensor-Typ
             if "spannung" in sensor_name.lower() or "voltage" in sensor_name.lower():
@@ -184,7 +263,9 @@ class MBusClient:
             class DecimalEncoder(json.JSONEncoder):
                 def default(self, o):
                     if isinstance(o, decimal.Decimal):
-                        return float(o)
+                        return round(float(o), 4)
+                    elif isinstance(o, float):
+                        return round(o, 4)
                     return super().default(o)
 
             payload = json.dumps(data, cls=DecimalEncoder)
