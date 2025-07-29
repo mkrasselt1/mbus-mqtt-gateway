@@ -19,6 +19,7 @@ class MBusClient:
         self.port = port
         self.baudrate = baudrate
         self.devices = []  # List of detected M-Bus devices
+        self.device_info = {}  # Dict to store device information
         self.mqtt_client = mqtt_client
         print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
 
@@ -37,7 +38,7 @@ class MBusClient:
 
                 self.mbus_scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF", False)
 
-        except serial.serialutil.SerialException as e:
+        except serial.SerialException as e:
             print(e)
 
             if not self.devices:
@@ -90,6 +91,18 @@ class MBusClient:
                     'medium':  frame.body.bodyHeader.measure_medium_field.parts[0],
                     'records': recs
                 }
+
+                # Speichere Device-Info und publiziere Status
+                self.device_info[address] = {
+                    'name': f"MBus Meter {address}",
+                    'manufacturer': ydata['manufacturer'],
+                    'address': address,
+                    'last_seen': time.time()
+                }
+                
+                # Publiziere Device-Status
+                if self.mqtt_client:
+                    self.mqtt_client.publish(f"device/{address}/status", "online")
 
                 return ydata
             
@@ -292,6 +305,26 @@ class MBusClient:
             data_sample = self.read_data_from_device(device)
             if data_sample:
                 self.publish_homeassistant_discovery(device, data_sample)
+                
+                # Publiziere Status-Discovery für jedes Device
+                if self.mqtt_client:
+                    device_name = self.device_info.get(device, {}).get('name', f"MBus Meter {device}")
+                    device_manufacturer = self.device_info.get(device, {}).get('manufacturer', 'Unknown')
+                    self.mqtt_client.publish_device_status_discovery(device, device_name, device_manufacturer)
+
+        # Publiziere Gateway-Discovery mit verbundenen Geräten
+        if self.mqtt_client and self.device_info:
+            import uuid
+            mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
+            connected_devices = [
+                {
+                    'name': info['name'],
+                    'address': info['address'],
+                    'manufacturer': info['manufacturer']
+                }
+                for info in self.device_info.values()
+            ]
+            self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
 
         # Continuously read data from all detected devices
         while True:
@@ -300,6 +333,10 @@ class MBusClient:
                 if data:
                     print(f"Read data from device {device}: {data}")
                     self.publish_meter_data(device, data)
+                else:
+                    # Device offline - publiziere offline Status
+                    if self.mqtt_client:
+                        self.mqtt_client.publish(f"device/{device}/status", "offline")
             #time.sleep(10)  # Wait 10 seconds before reading again
 
     
