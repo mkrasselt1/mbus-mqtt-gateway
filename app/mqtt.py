@@ -60,7 +60,16 @@ class MQTTClient:
         """Callback für MQTT-Verbindungsabbruch"""
         self.connected = False
         if rc != 0:
-            print(f"[WARN] MQTT-Verbindung unerwartet getrennt: Code {rc}")
+            reason_codes = {
+                1: "Incorrect protocol version",
+                2: "Invalid client identifier", 
+                3: "Server unavailable",
+                4: "Bad username or password",
+                5: "Not authorised",
+                7: "Connection lost"
+            }
+            reason = reason_codes.get(rc, f"Unknown error ({rc})")
+            print(f"[WARN] MQTT-Verbindung unerwartet getrennt: {reason}")
             if self.should_reconnect:
                 self._start_reconnect_thread()
         else:
@@ -85,34 +94,57 @@ class MQTTClient:
             self.reconnect_thread.start()
 
     def _reconnect_loop(self):
-        """Wiederverbindungsschleife mit exponential backoff"""
+        """Kontinuierliche Wiederverbindungsschleife"""
         retry_delay = 5  # Start mit 5 Sekunden
-        max_delay = 300  # Maximum 5 Minuten
+        max_delay = 60   # Maximum 1 Minute (nicht 5 Minuten)
+        attempt = 1
         
-        while not self.connected and self.should_reconnect:
+        while self.should_reconnect:
+            if self.connected:
+                # Verbindung ist da, kurz schlafen und dann prüfen
+                time.sleep(5)
+                continue
+                
             try:
-                print(f"[INFO] Versuche MQTT-Wiederverbindung in {retry_delay} Sekunden...")
-                time.sleep(retry_delay)
+                print(f"[INFO] MQTT-Wiederverbindungsversuch #{attempt}...")
                 
-                if not self.should_reconnect:
-                    break
-                    
-                print(f"[INFO] Verbinde zu MQTT-Broker {self.broker}:{self.port}...")
-                self.client.reconnect()
+                # Neuen Client erstellen falls der alte problematisch ist
+                if attempt > 5:
+                    print("[INFO] Erstelle neuen MQTT-Client...")
+                    try:
+                        self.client.loop_stop()
+                    except:
+                        pass
+                    self.client = mqtt.Client()
+                    self.client.on_connect = self._on_connect
+                    self.client.on_disconnect = self._on_disconnect
+                    self.client.on_log = self._on_log
+                    if self.username and self.password:
+                        self.client.username_pw_set(self.username, self.password)
+                    self.client.connect(self.broker, self.port, keepalive=60)
+                    self.client.loop_start()
+                    attempt = 1  # Reset attempt counter nach Client-Neustart
+                else:
+                    self.client.reconnect()
                 
-                # Warte kurz um zu sehen ob Verbindung erfolgreich
-                time.sleep(2)
+                # Kurz warten um zu sehen ob Verbindung erfolgreich
+                time.sleep(3)
                 
                 if self.connected:
-                    print("[INFO] MQTT-Wiederverbindung erfolgreich!")
-                    break
+                    print(f"[INFO] MQTT-Wiederverbindung erfolgreich!")
+                    retry_delay = 5  # Reset delay nach erfolgreicher Verbindung
                 else:
-                    # Exponential backoff: Verdopple delay bis zum Maximum
-                    retry_delay = min(retry_delay * 2, max_delay)
+                    # Sanftes exponential backoff
+                    retry_delay = min(retry_delay * 1.2, max_delay)
+                    attempt += 1
+                    print(f"[INFO] Warte {retry_delay:.1f} Sekunden vor nächstem Versuch...")
+                    time.sleep(retry_delay)
                     
             except Exception as e:
-                print(f"[ERROR] MQTT-Wiederverbindung fehlgeschlagen: {e}")
-                retry_delay = min(retry_delay * 2, max_delay)
+                print(f"[ERROR] MQTT-Wiederverbindungsversuch fehlgeschlagen: {e}")
+                retry_delay = min(retry_delay * 1.2, max_delay)
+                attempt += 1
+                time.sleep(retry_delay)
 
     def connect(self):
         """Verbinde zu MQTT-Broker mit automatischer Wiederverbindung"""
@@ -146,38 +178,58 @@ class MQTTClient:
         self.client.loop_stop()
         print("[INFO] MQTT-Verbindung getrennt")
 
-    def publish(self, topic, payload, retain=False):
-        """Publiziere Nachricht mit automatischer Wiederverbindung"""
-        if not self.connected:
+    def is_connected(self):
+        """Prüfe aktuelle Verbindung"""
+        return self.connected and self.client.is_connected()
+
+    def ensure_connection(self):
+        """Stelle sicher, dass eine Verbindung besteht - versucht kontinuierlich"""
+        if not self.is_connected():
+            print("[INFO] MQTT-Verbindung verloren, starte kontinuierliche Wiederverbindung...")
             if self.should_reconnect:
-                print(f"[WARN] MQTT nicht verbunden - starte Wiederverbindung für Topic: {topic}")
                 self._start_reconnect_thread()
                 
-                # Kurz warten ob Wiederverbindung schnell klappt
-                timeout = 5
+                # Kurz warten ob Wiederverbindung klappt
+                timeout = 15
                 start_time = time.time()
-                while not self.connected and (time.time() - start_time) < timeout:
-                    time.sleep(0.1)
-            
-            if not self.connected:
-                print(f"[WARN] MQTT-Verbindung nicht möglich, Nachricht verworfen: {topic}")
-                return False
-                
-        try:
-            full_topic = f"{self.topic_prefix}/{topic}"
-            result = self.client.publish(full_topic, payload, retain=retain)
-            
-            if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                print(f"[DEBUG] Published to topic {full_topic}: {payload}")
-                return True
+                while not self.is_connected() and (time.time() - start_time) < timeout:
+                    time.sleep(0.5)
+                    
+                return self.is_connected()
             else:
-                print(f"[WARN] MQTT publish fehlgeschlagen ({topic}): Code {result.rc}")
                 return False
+        return True
+
+    def publish(self, topic, payload, retain=False):
+        """Publiziere Nachricht mit kontinuierlicher Wiederverbindung"""
+        # Ständige Wiederverbindungsversuche bis erfolgreich
+        while True:
+            # Stelle sicher, dass eine gültige Verbindung besteht
+            if not self.ensure_connection():
+                print(f"[INFO] Warte auf MQTT-Verbindung für Topic: {topic}")
+                time.sleep(5)  # 5 Sekunden warten vor nächstem Versuch
+                continue
+            
+            # Verbindung ist da, versuche zu publizieren
+            try:
+                full_topic = f"{self.topic_prefix}/{topic}"
+                result = self.client.publish(full_topic, payload, retain=retain)
                 
-        except Exception as e:
-            print(f"[ERROR] MQTT publish Fehler ({topic}): {e}")
-            self.connected = False
-            return False
+                if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                    print(f"[DEBUG] Published to topic {full_topic}: {payload}")
+                    return True
+                else:
+                    print(f"[WARN] MQTT publish fehlgeschlagen ({topic}): Code {result.rc}")
+                    # Markiere Verbindung als verloren und versuche erneut
+                    self.connected = False
+                    time.sleep(2)
+                    continue
+                    
+            except Exception as e:
+                print(f"[ERROR] MQTT publish Fehler ({topic}): {e}")
+                self.connected = False
+                time.sleep(2)
+                continue
 
     def publish_discovery(self, component, object_id, payload):
         """
