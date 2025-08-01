@@ -41,7 +41,14 @@ class MQTTClient:
             print(f"[INFO] MQTT verbunden mit {self.broker}:{self.port}")
             
             # Bei Wiederverbindung: Discovery-Nachrichten erneut senden
-            if flags.session_present == 0:  # Neue Session
+            # Prüfe ob neue Session (flags kann dict oder Objekt sein)
+            session_present = False
+            if isinstance(flags, dict):
+                session_present = flags.get('session_present', False)
+            else:
+                session_present = getattr(flags, 'session_present', False)
+                
+            if not session_present:  # Neue Session
                 print("[INFO] Neue MQTT-Session - sende Discovery-Nachrichten erneut...")
                 self._resend_discovery_messages()
                 
