@@ -49,6 +49,12 @@ class MQTTClient:
             self.client.subscribe("homeassistant/status")
             print("[INFO] Abonniert: homeassistant/status")
             
+            # Alternativer Ansatz: Sende Discovery nach kurzer Wartezeit
+            # Home Assistant wird normalerweise schnell "online" melden wenn es läuft
+            # Falls nicht, starten wir Discovery trotzdem nach 5 Sekunden
+            threading.Timer(5.0, self._start_discovery_fallback).start()
+            print("[INFO] Discovery-Fallback Timer gestartet (5 Sekunden)...")
+            
             # Bei Wiederverbindung: Discovery-Nachrichten erneut senden
             # Prüfe ob neue Session (flags kann dict oder Objekt sein)
             session_present = False
@@ -87,6 +93,28 @@ class MQTTClient:
                     
         except Exception as e:
             print(f"[ERROR] Fehler beim Verarbeiten der MQTT-Nachricht: {e}")
+
+    def _check_ha_status_timeout(self):
+        """
+        Wird nach 3 Sekunden aufgerufen falls kein HA-Status empfangen wurde.
+        Nimmt an, dass HA online ist und startet Discovery.
+        """
+        if not self.ha_online:
+            print("[INFO] Kein Home Assistant Status empfangen - nehme an dass HA online ist")
+            self.ha_online = True
+            self._send_pending_discovery()
+
+    def _start_discovery_fallback(self):
+        """
+        Fallback: Startet Discovery nach 5 Sekunden auch ohne HA-Status.
+        Das ist sicherer als endlos zu warten.
+        """
+        if not self.ha_online and len(self.pending_discovery) > 0:
+            print("[INFO] Discovery-Fallback: Home Assistant Status unbekannt, starte Discovery trotzdem")
+            self.ha_online = True
+            self._send_pending_discovery()
+        elif self.ha_online:
+            print("[INFO] Discovery-Fallback nicht nötig - Home Assistant bereits online erkannt")
 
     def _send_pending_discovery(self):
         """Sende alle wartenden Discovery-Nachrichten"""
