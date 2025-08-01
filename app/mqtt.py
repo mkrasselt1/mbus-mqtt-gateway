@@ -18,10 +18,15 @@ class MQTTClient:
         # Discovery-Cache für Wiederholung bei Reconnect
         self.discovery_messages = {}
         self.reconnect_callback = None
+        
+        # Home Assistant Status Tracking
+        self.ha_online = False
+        self.pending_discovery = []  # Queue für Discovery-Nachrichten bis HA online ist
 
         # MQTT Callbacks setzen
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
         self.client.on_log = self._on_log
 
         if self.username and self.password:
@@ -40,6 +45,10 @@ class MQTTClient:
             self.connected = True
             print(f"[INFO] MQTT verbunden mit {self.broker}:{self.port}")
             
+            # Home Assistant Status abonnieren
+            self.client.subscribe("homeassistant/status")
+            print("[INFO] Abonniert: homeassistant/status")
+            
             # Bei Wiederverbindung: Discovery-Nachrichten erneut senden
             # Prüfe ob neue Session (flags kann dict oder Objekt sein)
             session_present = False
@@ -49,19 +58,61 @@ class MQTTClient:
                 session_present = getattr(flags, 'session_present', False)
                 
             if not session_present:  # Neue Session
-                print("[INFO] Neue MQTT-Session - sende Discovery-Nachrichten erneut...")
-                self._resend_discovery_messages()
-                
-                # Callback für externe Discovery-Wiederholung (z.B. M-Bus Devices)
-                if self.reconnect_callback:
-                    try:
-                        self.reconnect_callback()
-                        print("[INFO] Discovery-Nachrichten erfolgreich wiederholt")
-                    except Exception as e:
-                        print(f"[ERROR] Fehler beim Wiederholen der Discovery-Nachrichten: {e}")
+                print("[INFO] Neue MQTT-Session")
+                # Warte auf Home Assistant Online-Status bevor Discovery gesendet wird
+                if self.ha_online:
+                    print("[INFO] Home Assistant bereits online - sende Discovery-Nachrichten erneut...")
+                    self._resend_discovery_messages()
+                else:
+                    print("[INFO] Warte auf Home Assistant Online-Status...")
         else:
             self.connected = False
             print(f"[ERROR] MQTT-Verbindung fehlgeschlagen: Code {rc}")
+
+    def _on_message(self, client, userdata, msg):
+        """Callback für empfangene MQTT-Nachrichten"""
+        try:
+            topic = msg.topic
+            payload = msg.payload.decode('utf-8')
+            
+            # Home Assistant Status überwachen
+            if topic == "homeassistant/status":
+                if payload == "online":
+                    print("[INFO] Home Assistant ist online - sende wartende Discovery-Nachrichten...")
+                    self.ha_online = True
+                    self._send_pending_discovery()
+                elif payload == "offline":
+                    print("[INFO] Home Assistant ist offline")
+                    self.ha_online = False
+                    
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Verarbeiten der MQTT-Nachricht: {e}")
+
+    def _send_pending_discovery(self):
+        """Sende alle wartenden Discovery-Nachrichten"""
+        if not self.ha_online:
+            return
+            
+        for discovery_data in self.pending_discovery:
+            topic = discovery_data['topic']
+            payload = discovery_data['payload']
+            self.client.publish(topic, payload)
+            print(f"[DEBUG] Wartende Discovery gesendet: {topic}")
+            
+        # Cache für Reconnect aktualisieren
+        for discovery_data in self.pending_discovery:
+            self.discovery_messages[discovery_data['topic']] = discovery_data['payload']
+            
+        self.pending_discovery.clear()
+        print(f"[INFO] {len(self.discovery_messages)} Discovery-Nachrichten gesendet")
+        
+        # Callback für externe Discovery-Wiederholung (z.B. M-Bus Devices) auch ausführen
+        if self.reconnect_callback:
+            try:
+                self.reconnect_callback()
+                print("[INFO] Externe Discovery-Nachrichten auch gesendet")
+            except Exception as e:
+                print(f"[ERROR] Fehler beim Senden externer Discovery-Nachrichten: {e}")
 
     def _on_disconnect(self, client, userdata, rc):
         """Callback für MQTT-Verbindungsabbruch"""
@@ -89,10 +140,22 @@ class MQTTClient:
             print(f"[MQTT-LOG] {buf}")
 
     def _resend_discovery_messages(self):
-        """Sende alle gecachten Discovery-Nachrichten erneut"""
+        """Sende alle gecachten Discovery-Nachrichten erneut (nur wenn HA online)"""
+        if not self.ha_online:
+            print("[INFO] Home Assistant nicht online - Discovery-Wiederholung wartet...")
+            return
+            
         for topic, payload in self.discovery_messages.items():
             self.client.publish(topic, payload)
             print(f"[DEBUG] Discovery wiederholt: {topic}")
+        
+        # Auch Reconnect-Callback ausführen wenn HA online ist
+        if self.reconnect_callback:
+            try:
+                self.reconnect_callback()
+                print("[INFO] Discovery-Nachrichten erfolgreich wiederholt")
+            except Exception as e:
+                print(f"[ERROR] Fehler beim Wiederholen der Discovery-Nachrichten: {e}")
 
     def _start_reconnect_thread(self):
         """Startet Wiederverbindungsthread falls noch nicht aktiv"""
@@ -241,6 +304,7 @@ class MQTTClient:
     def publish_discovery(self, component, object_id, payload):
         """
         Veröffentlicht eine allgemeine Home Assistant Discovery-Nachricht.
+        Wartet auf Home Assistant Online-Status bevor gesendet wird.
         component: z.B. 'sensor', 'switch', 'binary_sensor'
         object_id: z.B. 'mbus_gateway_ip'
         payload: dict mit den Discovery-Informationen
@@ -248,12 +312,21 @@ class MQTTClient:
         discovery_topic = f"homeassistant/{component}/{object_id}/config"
         payload_json = json.dumps(payload)
         
-        # Discovery-Nachricht cachen für Wiederholung bei Reconnect
-        self.discovery_messages[discovery_topic] = payload_json
-        
-        print(f"[DEBUG] Sende Home Assistant Discovery an {discovery_topic}")
-        self.client.publish(discovery_topic, payload_json)
-        print(f"[DEBUG] Discovery gesendet und gecacht.")
+        if self.ha_online:
+            # Home Assistant ist online - sofort senden
+            print(f"[DEBUG] Sende Home Assistant Discovery an {discovery_topic}")
+            self.client.publish(discovery_topic, payload_json)
+            print(f"[DEBUG] Discovery gesendet und gecacht.")
+            
+            # Discovery-Nachricht cachen für Wiederholung bei Reconnect
+            self.discovery_messages[discovery_topic] = payload_json
+        else:
+            # Home Assistant noch nicht online - in Warteschlange einreihen
+            print(f"[INFO] Home Assistant noch nicht online - Discovery in Warteschlange: {discovery_topic}")
+            self.pending_discovery.append({
+                'topic': discovery_topic,
+                'payload': payload_json
+            })
 
     # Optional: Convenience-Methode für IP-Sensor
     def publish_ip_discovery(self, mac):
