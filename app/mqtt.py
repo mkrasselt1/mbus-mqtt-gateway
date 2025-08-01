@@ -14,6 +14,10 @@ class MQTTClient:
         self.connected = False
         self.reconnect_thread = None
         self.should_reconnect = True
+        
+        # Discovery-Cache für Wiederholung bei Reconnect
+        self.discovery_messages = {}
+        self.reconnect_callback = None
 
         # MQTT Callbacks setzen
         self.client.on_connect = self._on_connect
@@ -23,11 +27,31 @@ class MQTTClient:
         if self.username and self.password:
             self.client.username_pw_set(self.username, self.password)
 
+    def set_reconnect_callback(self, callback):
+        """
+        Setze eine Callback-Funktion, die bei erfolgreicher Wiederverbindung aufgerufen wird.
+        Diese sollte alle Discovery-Nachrichten erneut senden.
+        """
+        self.reconnect_callback = callback
+
     def _on_connect(self, client, userdata, flags, rc):
         """Callback für erfolgreiche MQTT-Verbindung"""
         if rc == 0:
             self.connected = True
             print(f"[INFO] MQTT verbunden mit {self.broker}:{self.port}")
+            
+            # Bei Wiederverbindung: Discovery-Nachrichten erneut senden
+            if flags.session_present == 0:  # Neue Session
+                print("[INFO] Neue MQTT-Session - sende Discovery-Nachrichten erneut...")
+                self._resend_discovery_messages()
+                
+                # Callback für externe Discovery-Wiederholung (z.B. M-Bus Devices)
+                if self.reconnect_callback:
+                    try:
+                        self.reconnect_callback()
+                        print("[INFO] Discovery-Nachrichten erfolgreich wiederholt")
+                    except Exception as e:
+                        print(f"[ERROR] Fehler beim Wiederholen der Discovery-Nachrichten: {e}")
         else:
             self.connected = False
             print(f"[ERROR] MQTT-Verbindung fehlgeschlagen: Code {rc}")
@@ -47,6 +71,12 @@ class MQTTClient:
         # Nur wichtige Logs anzeigen
         if level <= mqtt.MQTT_LOG_WARNING:
             print(f"[MQTT-LOG] {buf}")
+
+    def _resend_discovery_messages(self):
+        """Sende alle gecachten Discovery-Nachrichten erneut"""
+        for topic, payload in self.discovery_messages.items():
+            self.client.publish(topic, payload)
+            print(f"[DEBUG] Discovery wiederholt: {topic}")
 
     def _start_reconnect_thread(self):
         """Startet Wiederverbindungsthread falls noch nicht aktiv"""
@@ -157,9 +187,14 @@ class MQTTClient:
         payload: dict mit den Discovery-Informationen
         """
         discovery_topic = f"homeassistant/{component}/{object_id}/config"
-        print(f"[DEBUG] Sende Home Assistant Discovery an {discovery_topic}: {payload}")
-        self.client.publish(discovery_topic, json.dumps(payload))
-        print(f"[DEBUG] Discovery gesendet.")
+        payload_json = json.dumps(payload)
+        
+        # Discovery-Nachricht cachen für Wiederholung bei Reconnect
+        self.discovery_messages[discovery_topic] = payload_json
+        
+        print(f"[DEBUG] Sende Home Assistant Discovery an {discovery_topic}")
+        self.client.publish(discovery_topic, payload_json)
+        print(f"[DEBUG] Discovery gesendet und gecacht.")
 
     # Optional: Convenience-Methode für IP-Sensor
     def publish_ip_discovery(self, mac):

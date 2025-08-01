@@ -54,6 +54,10 @@ def publish_ip_loop():
     print("[DEBUG] MQTT-Verbindung hergestellt.")
     mac = get_mac().replace(":", "")
     print(f"[DEBUG] Verwende MAC-Adresse: {mac}")
+    
+    # Callback für MQTT-Reconnect setzen
+    mqtt_client.set_reconnect_callback(lambda: mqtt_client.publish_ip_discovery(mac))
+    
     mqtt_client.publish_ip_discovery(mac)
     print("[DEBUG] Home Assistant Discovery für IP veröffentlicht.")
     while True:

@@ -22,6 +22,39 @@ class MBusClient:
         self.device_info = {}  # Dict to store device information
         self.mqtt_client = mqtt_client
         print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
+        
+        # Setze Reconnect-Callback für MQTT-Client
+        if self.mqtt_client:
+            self.mqtt_client.set_reconnect_callback(self._on_mqtt_reconnect)
+
+    def _on_mqtt_reconnect(self):
+        """
+        Wird aufgerufen, wenn MQTT-Verbindung wiederhergestellt wird.
+        Sendet alle Discovery-Nachrichten erneut.
+        """
+        print("[INFO] MQTT wiederverbunden - sende M-Bus Discovery-Nachrichten erneut...")
+        
+        # Discovery für alle bereits erkannten Geräte wiederholen
+        for device in self.devices:
+            if device in self.device_info:
+                # Status Discovery wiederholen
+                device_name = self.device_info[device].get('name', f"MBus Meter {device}")
+                device_manufacturer = self.device_info[device].get('manufacturer', 'Unknown')
+                self.mqtt_client.publish_device_status_discovery(device, device_name, device_manufacturer)
+        
+        # Gateway Discovery wiederholen
+        if self.device_info:
+            import uuid
+            mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
+            connected_devices = [
+                {
+                    'name': info['name'],
+                    'address': info['address'],
+                    'manufacturer': info['manufacturer']
+                }
+                for info in self.device_info.values()
+            ]
+            self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
 
     def scan_devices(self):
         """
