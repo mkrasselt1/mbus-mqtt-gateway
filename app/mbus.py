@@ -2,6 +2,7 @@ import time
 import json
 import serial
 import meterbus
+import threading
 #from meterbus.telegram_short import TelegramShort
         #from meterbus.defines import CONTROL_MASK_REQ_UD1, CONTROL_MASK_DIR_M2S
         #from meterbus.serial import serial_send
@@ -26,6 +27,49 @@ class MBusClient:
         # Setze Reconnect-Callback für MQTT-Client
         if self.mqtt_client:
             self.mqtt_client.set_reconnect_callback(self._on_mqtt_reconnect)
+            # Registriere M-Bus Discovery-Callback
+            self.mqtt_client.add_discovery_callback(self._send_mbus_discovery)
+
+    def _send_mbus_discovery(self):
+        """
+        Sendet alle M-Bus Discovery-Nachrichten.
+        Wird von der zentralen Discovery-Methode aufgerufen.
+        """
+        print("[INFO] Sende M-Bus Discovery-Nachrichten...")
+        
+        if not self.mqtt_client:
+            print("[WARN] MQTT-Client nicht verfügbar für M-Bus Discovery")
+            return
+        
+        # Discovery für alle bereits erkannten Geräte
+        for device in self.devices:
+            if device in self.device_info:
+                # Sensor Discovery für jedes Gerät
+                device_data = {
+                    'manufacturer': self.device_info[device].get('manufacturer', 'Unknown'),
+                    'records': self.device_info[device].get('records', [])
+                }
+                if device_data['records']:
+                    self.publish_homeassistant_discovery(device, device_data)
+                
+                # Status Discovery
+                device_name = self.device_info[device].get('name', f"MBus Meter {device}")
+                device_manufacturer = self.device_info[device].get('manufacturer', 'Unknown')
+                self.mqtt_client.publish_device_status_discovery(device, device_name, device_manufacturer)
+        
+        # Gateway Discovery
+        if self.device_info:
+            import uuid
+            mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
+            connected_devices = [
+                {
+                    'name': info['name'],
+                    'address': info['address'],
+                    'manufacturer': info['manufacturer']
+                }
+                for info in self.device_info.values()
+            ]
+            self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
 
     def _on_mqtt_reconnect(self):
         """
@@ -129,7 +173,8 @@ class MBusClient:
                     'name': f"MBus Meter {address}",
                     'manufacturer': ydata['manufacturer'],
                     'address': address,
-                    'last_seen': time.time()
+                    'last_seen': time.time(),
+                    'records': recs  # Speichere Records für Discovery
                 }
                 
                 # Publiziere Device-Status
@@ -332,31 +377,10 @@ class MBusClient:
         
         print(f"Detected devices: {self.devices}")
 
-        # Publish Home Assistant auto-discovery for all detected devices
-        for device in self.devices:
-            data_sample = self.read_data_from_device(device)
-            if data_sample:
-                self.publish_homeassistant_discovery(device, data_sample)
-                
-                # Publiziere Status-Discovery für jedes Device
-                if self.mqtt_client:
-                    device_name = self.device_info.get(device, {}).get('name', f"MBus Meter {device}")
-                    device_manufacturer = self.device_info.get(device, {}).get('manufacturer', 'Unknown')
-                    self.mqtt_client.publish_device_status_discovery(device, device_name, device_manufacturer)
-
-        # Publiziere Gateway-Discovery mit verbundenen Geräten
-        if self.mqtt_client and self.device_info:
-            import uuid
-            mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
-            connected_devices = [
-                {
-                    'name': info['name'],
-                    'address': info['address'],
-                    'manufacturer': info['manufacturer']
-                }
-                for info in self.device_info.values()
-            ]
-            self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
+        # Nach erfolgreichem Scan: Zentrale Discovery auslösen
+        if self.mqtt_client and self.devices:
+            print("[INFO] M-Bus Scan abgeschlossen - starte Discovery in 2 Sekunden...")
+            threading.Timer(2.0, self.mqtt_client.send_all_discovery).start()
 
         # Continuously read data from all detected devices
         while True:
