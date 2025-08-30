@@ -308,7 +308,6 @@ class MQTTClient:
                 result = self.client.publish(full_topic, payload, retain=retain)
                 
                 if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                    print(f"[DEBUG] Published to topic {full_topic}: {payload}")
                     return True
                 else:
                     print(f"[WARN] MQTT publish fehlgeschlagen ({topic}): Code {result.rc}")

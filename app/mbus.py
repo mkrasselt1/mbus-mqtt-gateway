@@ -383,16 +383,27 @@ class MBusClient:
             threading.Timer(2.0, self.mqtt_client.send_all_discovery).start()
 
         # Continuously read data from all detected devices
-        while True:
-            for device in self.devices:
-                data = self.read_data_from_device(device)
-                if data:
-                    print(f"Received {len(data.get('records', []))} records from device {device}")
-                    self.publish_meter_data(device, data)
-                else:
-                    # Device offline - publiziere offline Status
-                    if self.mqtt_client:
-                        self.mqtt_client.publish(f"device/{device}/status", "offline")
+        try:
+            while True:
+                for device in self.devices:
+                    data = self.read_data_from_device(device)
+                    if data:
+                        print(f"Received {len(data.get('records', []))} records from device {device}")
+                        self.publish_meter_data(device, data)
+                    else:
+                        # Device offline - publiziere offline Status
+                        if self.mqtt_client:
+                            self.mqtt_client.publish(f"device/{device}/status", "offline")
+                
+                # Kurze Pause zwischen den Zyklen
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("[INFO] M-Bus Datenlesung beendet durch Benutzer")
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Lesen der M-Bus Daten: {e}")
+            raise
+        finally:
+            print("[INFO] M-Bus Service wird beendet...")
             #time.sleep(10)  # Wait 10 seconds before reading again
 
     
