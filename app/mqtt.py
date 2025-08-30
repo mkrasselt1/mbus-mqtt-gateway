@@ -86,7 +86,8 @@ class MQTTClient:
                 if payload == "online":
                     print("[INFO] Home Assistant ist online - sende wartende Discovery-Nachrichten...")
                     self.ha_online = True
-                    self._send_pending_discovery()
+                    threading.Timer(5.0, self._start_discovery_fallback).start()
+                    print("[INFO] Discovery Timer gestartet (5 Sekunden)...")
                 elif payload == "offline":
                     print("[INFO] Home Assistant ist offline")
                     self.ha_online = False
@@ -95,20 +96,14 @@ class MQTTClient:
             print(f"[ERROR] Fehler beim Verarbeiten der MQTT-Nachricht: {e}")
 
     def _check_ha_status_timeout(self):
-        """
-        Wird nach 3 Sekunden aufgerufen falls kein HA-Status empfangen wurde.
-        Nimmt an, dass HA online ist und startet Discovery.
-        """
+        """Wird nach 3 Sekunden aufgerufen falls kein HA-Status empfangen wurde."""
         if not self.ha_online:
             print("[INFO] Kein Home Assistant Status empfangen - nehme an dass HA online ist")
             self.ha_online = True
             self._send_pending_discovery()
 
     def _start_discovery_fallback(self):
-        """
-        Fallback: Startet Discovery nach 5 Sekunden auch ohne HA-Status.
-        Das ist sicherer als endlos zu warten.
-        """
+        """Fallback: Startet Discovery nach 5 Sekunden auch ohne HA-Status."""
         if not self.ha_online and len(self.pending_discovery) > 0:
             print("[INFO] Discovery-Fallback: Home Assistant Status unbekannt, starte Discovery trotzdem")
             self.ha_online = True
@@ -151,7 +146,7 @@ class MQTTClient:
                 2: "Invalid client identifier", 
                 3: "Server unavailable",
                 4: "Bad username or password",
-                5: "Not authorised",
+                5: "Not authorized",
                 7: "Connection lost"
             }
             reason = reason_codes.get(rc, f"Unknown error ({rc})")

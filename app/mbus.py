@@ -114,8 +114,7 @@ class MBusClient:
                         'function': getattr(rec, 'function_field', {}).get('parts', [None])[0] if hasattr(rec, 'function_field') else None
                     })
 
-                # TODO: Später selective readout hinzufügen, wenn bodyPayload Problem gelöst ist
-                print(f"Read {len(recs)} standard records from device {address}")
+                # print(f"Read {len(recs)} standard records from device {address}")
 
                 ydata = {
                     'manufacturer': frame.body.bodyHeader.manufacturer_field.decodeManufacturer,
@@ -317,7 +316,7 @@ class MBusClient:
             payload = json.dumps(data, cls=DecimalEncoder)
             if self.mqtt_client is not None:
                 self.mqtt_client.publish(topic, payload)
-                print(f"Published data for device {address} to MQTT: {payload}")
+                # print(f"Published data for device {address} to MQTT: {payload}")
             else:
                 print("MQTT client is not initialized. Cannot publish data.")
         else:
@@ -364,7 +363,7 @@ class MBusClient:
             for device in self.devices:
                 data = self.read_data_from_device(device)
                 if data:
-                    print(f"Read data from device {device}: {data}")
+                    print(f"Received {len(data.get('records', []))} records from device {device}")
                     self.publish_meter_data(device, data)
                 else:
                     # Device offline - publiziere offline Status
