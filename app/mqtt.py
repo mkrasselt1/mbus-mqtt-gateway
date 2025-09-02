@@ -18,13 +18,22 @@ class MQTTClient:
         # Home Assistant Status Tracking
         self.ha_online = False
         self.discovery_timer = None  # Timer für regelmäßige Discovery
-        self.all_discovery_callbacks = []  # Liste aller Discovery-Callbacks
+        
+        # Zentrale Geräteverwaltung (statt Discovery-Callbacks)
+        self.gateway_info = None  # Gateway-Informationen
+        self.mbus_devices = {}     # M-Bus Geräte-Informationen
+        self.initial_scan_complete = False  # Flag für ersten Scan
 
         # MQTT Callbacks setzen
         self.client.on_connect = self._on_connect
         self.client.on_disconnect = self._on_disconnect
         self.client.on_message = self._on_message
         self.client.on_log = self._on_log
+
+        # Last Will Testament (LWT) konfigurieren
+        will_topic = f"{self.topic_prefix}/status"
+        self.client.will_set(will_topic, "offline", qos=1, retain=True)
+        print(f"[INFO] Last Will Testament konfiguriert: {will_topic} -> 'offline'")
 
         if self.username and self.password:
             self.client.username_pw_set(self.username, self.password)
@@ -36,30 +45,130 @@ class MQTTClient:
         """
         self.reconnect_callback = callback
 
+    def set_gateway_info(self, mac, connected_devices=None):
+        """
+        Setze Gateway-Informationen für Discovery.
+        """
+        self.gateway_info = {
+            'mac': mac,
+            'connected_devices': connected_devices or []
+        }
+        print(f"[DEBUG] Gateway-Informationen aktualisiert: MAC={mac}, Geräte={len(connected_devices or [])}")
+
+    def add_mbus_device(self, address, device_info):
+        """
+        Füge ein M-Bus Gerät zur zentralen Verwaltung hinzu.
+        """
+        self.mbus_devices[address] = device_info
+        print(f"[DEBUG] M-Bus Gerät hinzugefügt: {address} - {device_info.get('name', 'Unknown')}")
+
+    def set_initial_scan_complete(self):
+        """
+        Markiere den ersten Scan als abgeschlossen und prüfe Discovery-Trigger.
+        """
+        self.initial_scan_complete = True
+        print("[INFO] Erster M-Bus Scan abgeschlossen")
+        # Trigger Discovery wenn Bedingungen erfüllt sind
+        self.trigger_discovery_if_ready()
+
     def add_discovery_callback(self, callback):
         """
-        Füge eine Discovery-Callback-Funktion hinzu.
-        Diese wird bei jeder zentralen Discovery-Sendung aufgerufen.
+        DEPRECATED: Verwende stattdessen set_gateway_info() und add_mbus_device()
         """
-        if callback not in self.all_discovery_callbacks:
-            self.all_discovery_callbacks.append(callback)
-            print(f"[DEBUG] Discovery-Callback hinzugefügt: {callback.__name__}")
+        print("[WARN] add_discovery_callback ist deprecated - verwende set_gateway_info() und add_mbus_device()")
+        pass
 
     def send_all_discovery(self):
         """
-        Zentrale Methode: Sendet alle Discovery-Nachrichten von allen registrierten Quellen.
+        Zentrale Methode: Generiert und sendet alle Discovery-Nachrichten aus gespeicherten Geräteinformationen.
         """
-        print("[INFO] === Sende alle Discovery-Nachrichten ===")
+        print("[INFO] === Generiere und sende alle Discovery-Nachrichten ===")
         
-        # Alle registrierten Discovery-Callbacks ausführen
-        for callback in self.all_discovery_callbacks:
-            try:
-                callback()
-                print(f"[DEBUG] Discovery-Callback ausgeführt: {callback.__name__}")
-            except Exception as e:
-                print(f"[ERROR] Fehler beim Ausführen von Discovery-Callback {callback.__name__}: {e}")
+        # 1. Gateway IP-Sensor Discovery
+        if self.gateway_info:
+            mac = self.gateway_info['mac']
+            self.publish_ip_discovery(mac)
+            
+            # Gateway-Geräteliste Discovery
+            self.publish_gateway_discovery(mac, self.gateway_info['connected_devices'])
         
-        print(f"[INFO] Discovery komplett")
+        # 2. M-Bus Geräte Discovery
+        for address, device_info in self.mbus_devices.items():
+            # Sensor Discovery für jedes Gerät
+            records = device_info.get('records', [])
+            if records:
+                manufacturer = device_info.get('manufacturer', 'Unknown')
+                device_data = {
+                    'manufacturer': manufacturer,
+                    'records': records,
+                    'medium': device_info.get('medium', 'Unknown'),
+                    'identification': device_info.get('identification', ''),
+                    'name': device_info.get('name', f"MBus Meter {address}")
+                }
+                self._publish_mbus_device_discovery(address, device_data)
+            
+            # Status Discovery
+            device_name = device_info.get('name', f"MBus Meter {address}")
+            device_manufacturer = device_info.get('manufacturer', 'Unknown')
+            self.publish_device_status_discovery(address, device_name, device_manufacturer)
+        
+        print(f"[INFO] Discovery komplett - Gateway: {bool(self.gateway_info)}, M-Bus Geräte: {len(self.mbus_devices)}")
+
+    def _publish_mbus_device_discovery(self, address, device_data):
+        """
+        Hilfsmethode: Publiziert Discovery für alle Sensoren eines M-Bus Geräts.
+        """
+        records = device_data.get("records", [])
+        for idx, record in enumerate(records):
+            sensor_name = record.get("name", f"Record {idx}")
+            key = f"record_{idx}"
+            object_id = f"mbus_meter_{address}_{key}"
+            
+            unit = record.get("unit", "")
+            
+            payload = {
+                "name": f"{sensor_name} ({address})",
+                "state_topic": f"{self.topic_prefix}/meter/{address}",
+                "value_template": f"{{{{ value_json.records[{idx}].value }}}}",
+                "availability_topic": f"{self.topic_prefix}/status",
+                "payload_available": "online",
+                "payload_not_available": "offline",
+                "unique_id": object_id,
+                "device": {
+                    "identifiers": [f"mbus_meter_{address}"],
+                    "name": device_data.get('name', f"MBus Meter {address}"),
+                    "manufacturer": device_data.get("manufacturer", "Unknown"),
+                    "model": device_data.get("medium", "Unknown"),
+                    "sw_version": device_data.get("identification", ""),
+                },
+            }
+            
+            # Unit nur hinzufügen wenn sie nicht 'none' oder leer ist
+            if unit and unit.lower() != "none":
+                payload["unit_of_measurement"] = unit
+            
+            # Icons basierend auf Sensor-Typ
+            self._add_sensor_icon(payload, sensor_name)
+            
+            self.publish_discovery("sensor", object_id, payload)
+
+    def _add_sensor_icon(self, payload, sensor_name):
+        """
+        Hilfsmethode: Fügt passende Icons basierend auf Sensor-Typ hinzu.
+        """
+        name_lower = sensor_name.lower()
+        if "spannung" in name_lower or "voltage" in name_lower:
+            payload["icon"] = "mdi:lightning-bolt"
+        elif "strom" in name_lower or "current" in name_lower:
+            payload["icon"] = "mdi:current-ac"
+        elif "leistung" in name_lower or "power" in name_lower:
+            payload["icon"] = "mdi:flash"
+        elif "energie" in name_lower or "energy" in name_lower:
+            payload["icon"] = "mdi:lightning-bolt-circle"
+        elif "frequenz" in name_lower or "frequency" in name_lower:
+            payload["icon"] = "mdi:sine-wave"
+        elif "cos" in name_lower:
+            payload["icon"] = "mdi:cosine-wave"
 
     def send_offline_status(self):
         """
@@ -72,15 +181,6 @@ class MQTTClient:
             gateway_topic = f"{self.topic_prefix}/status"
             self.client.publish(gateway_topic, "offline", retain=True)
             print(f"[INFO] Gateway offline-Status gesendet: {gateway_topic}")
-            
-            # Alle M-Bus Geräte offline setzen
-            for callback in self.all_discovery_callbacks:
-                try:
-                    # Hier könnte man spezifische Offline-Callbacks haben
-                    # Für jetzt senden wir ein generisches Offline-Signal
-                    pass
-                except Exception as e:
-                    print(f"[ERROR] Fehler beim Offline-Status für {callback.__name__}: {e}")
             
             # Kurz warten damit die Nachrichten gesendet werden
             time.sleep(1)
@@ -100,20 +200,18 @@ class MQTTClient:
         except Exception as e:
             print(f"[ERROR] Fehler beim Senden des Online-Status: {e}")
 
-    def start_periodic_discovery(self, interval_minutes=5):
+    def trigger_discovery_if_ready(self):
         """
-        Startet regelmäßige Discovery-Sendung.
+        Triggert Discovery nur wenn sowohl der erste Scan abgeschlossen 
+        als auch Home Assistant online ist.
         """
-        def periodic_discovery():
-            while True:
-                time.sleep(interval_minutes * 60)  # Minuten in Sekunden
-                if self.connected:
-                    print(f"[INFO] Regelmäßige Discovery nach {interval_minutes} Minuten")
-                    self.send_all_discovery()
-        
-        discovery_thread = threading.Thread(target=periodic_discovery, daemon=True)
-        discovery_thread.start()
-        print(f"[INFO] Regelmäßige Discovery gestartet (alle {interval_minutes} Minuten)")
+        if self.initial_scan_complete and self.ha_online:
+            print("[INFO] Beide Bedingungen erfüllt - sende Discovery")
+            self.send_all_discovery()
+        else:
+            scan_status = "✅" if self.initial_scan_complete else "⏳"
+            ha_status = "✅" if self.ha_online else "⏳"
+            print(f"[INFO] Warte auf Bedingungen - Scan: {scan_status}, HA: {ha_status}")
 
     def _on_connect(self, client, userdata, flags, rc):
         """Callback für erfolgreiche MQTT-Verbindung"""
@@ -160,10 +258,10 @@ class MQTTClient:
             # Home Assistant Status überwachen
             if topic == "homeassistant/status":
                 if payload == "online":
-                    print("[INFO] Home Assistant ist online - starte Discovery-Timer...")
+                    print("[INFO] Home Assistant ist online - Birth Message empfangen")
                     self.ha_online = True
-                    # 5 Sekunden warten, dann alle Discovery senden
-                    threading.Timer(5.0, self.send_all_discovery).start()
+                    # Trigger Discovery wenn Bedingungen erfüllt sind
+                    self.trigger_discovery_if_ready()
                 elif payload == "offline":
                     print("[INFO] Home Assistant ist offline")
                     self.ha_online = False
@@ -272,8 +370,8 @@ class MQTTClient:
                 print("[INFO] MQTT-Verbindung erfolgreich hergestellt")
                 # Sende Online-Status
                 self.send_online_status()
-                # Starte regelmäßige Discovery (alle 5 Minuten)
-                self.start_periodic_discovery()
+                # Discovery wird jetzt über Birth Message und Scan-Completion getriggert
+                self.trigger_discovery_if_ready()
             else:
                 print("[WARN] MQTT-Verbindung timeout - versuche weiter im Hintergrund")
                 

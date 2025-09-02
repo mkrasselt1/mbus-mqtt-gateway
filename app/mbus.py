@@ -27,37 +27,27 @@ class MBusClient:
         # Setze Reconnect-Callback für MQTT-Client
         if self.mqtt_client:
             self.mqtt_client.set_reconnect_callback(self._on_mqtt_reconnect)
-            # Registriere M-Bus Discovery-Callback
-            self.mqtt_client.add_discovery_callback(self._send_mbus_discovery)
+            # Neue Geräteverwaltung statt Callbacks
 
-    def _send_mbus_discovery(self):
+    def _update_device_registry(self):
         """
-        Sendet alle M-Bus Discovery-Nachrichten.
-        Wird von der zentralen Discovery-Methode aufgerufen.
+        Aktualisiert die zentrale Geräteverwaltung im MQTT-Client mit aktuellen M-Bus Geräten.
         """
-        print("[INFO] Sende M-Bus Discovery-Nachrichten...")
-        
         if not self.mqtt_client:
-            print("[WARN] MQTT-Client nicht verfügbar für M-Bus Discovery")
+            print("[WARN] MQTT-Client nicht verfügbar für Geräteverwaltung")
             return
         
-        # Discovery für alle bereits erkannten Geräte
+        print("[INFO] Aktualisiere zentrale Geräteverwaltung...")
+        
+        # Alle M-Bus Geräte zur zentralen Verwaltung hinzufügen
         for device in self.devices:
             if device in self.device_info:
-                # Sensor Discovery für jedes Gerät
-                device_data = {
-                    'manufacturer': self.device_info[device].get('manufacturer', 'Unknown'),
-                    'records': self.device_info[device].get('records', [])
-                }
-                if device_data['records']:
-                    self.publish_homeassistant_discovery(device, device_data)
-                
-                # Status Discovery
-                device_name = self.device_info[device].get('name', f"MBus Meter {device}")
-                device_manufacturer = self.device_info[device].get('manufacturer', 'Unknown')
-                self.mqtt_client.publish_device_status_discovery(device, device_name, device_manufacturer)
+                device_info = self.device_info[device].copy()
+                # Adresse hinzufügen für Discovery
+                device_info['address'] = device
+                self.mqtt_client.add_mbus_device(device, device_info)
         
-        # Gateway Discovery
+        # Gateway-Informationen aktualisieren
         if self.device_info:
             import uuid
             mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
@@ -69,36 +59,16 @@ class MBusClient:
                 }
                 for info in self.device_info.values()
             ]
-            self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
+            self.mqtt_client.set_gateway_info(mac, connected_devices)
 
     def _on_mqtt_reconnect(self):
         """
         Wird aufgerufen, wenn MQTT-Verbindung wiederhergestellt wird.
-        Sendet alle Discovery-Nachrichten erneut.
+        Aktualisiert die Geräteverwaltung und triggert Discovery.
         """
-        print("[INFO] MQTT wiederverbunden - sende M-Bus Discovery-Nachrichten erneut...")
-        
-        # Discovery für alle bereits erkannten Geräte wiederholen
-        for device in self.devices:
-            if device in self.device_info:
-                # Status Discovery wiederholen
-                device_name = self.device_info[device].get('name', f"MBus Meter {device}")
-                device_manufacturer = self.device_info[device].get('manufacturer', 'Unknown')
-                self.mqtt_client.publish_device_status_discovery(device, device_name, device_manufacturer)
-        
-        # Gateway Discovery wiederholen
-        if self.device_info:
-            import uuid
-            mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
-            connected_devices = [
-                {
-                    'name': info['name'],
-                    'address': info['address'],
-                    'manufacturer': info['manufacturer']
-                }
-                for info in self.device_info.values()
-            ]
-            self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
+        print("[INFO] MQTT wiederverbunden - aktualisiere Geräteverwaltung...")
+        self._update_device_registry()
+        # Discovery wird automatisch getriggert wenn HA online ist
 
     def start_periodic_scan(self, interval_minutes):
         """
@@ -145,12 +115,14 @@ class MBusClient:
         scan_thread.start()
         print(f"[INFO] Regelmäßiger M-Bus Scan gestartet (alle {interval_minutes} Minuten)")
 
-    def scan_devices(self):
+    def scan_devices(self, is_initial_scan=False):
         """
         Scan for M-Bus devices on the network.
         Thread-safe und vermeidet Dopplungen.
+        
+        :param is_initial_scan: True wenn dies der erste Scan beim Start ist
         """
-        print("[INFO] Starte M-Bus Geräte-Scan...")
+        print(f"[INFO] Starte M-Bus Geräte-Scan{'(Initial)' if is_initial_scan else ''}...")
         initial_device_count = len(self.devices)
         
         try:
@@ -175,6 +147,15 @@ class MBusClient:
             print("[WARN] M-Bus Scan abgeschlossen: Keine Geräte gefunden")
         else:
             print(f"[INFO] M-Bus Scan abgeschlossen: Keine neuen Geräte (Total: {new_device_count})")
+        
+        # Nach dem Scan: Geräteverwaltung aktualisieren
+        self._update_device_registry()
+        
+        # Beim ersten Scan: Scan-Complete-Flag setzen
+        if is_initial_scan:
+            print("[INFO] Erster Scan abgeschlossen - markiere als complete")
+            if self.mqtt_client:
+                self.mqtt_client.set_initial_scan_complete()
 
     def read_data_from_device(self, address):
         """
@@ -431,14 +412,12 @@ class MBusClient:
         :param scan_interval_minutes: Intervall in Minuten für erneutes Scannen nach neuen Geräten (Standard: 60 Min)
         """
         # Initial scan for devices on startup
-        self.scan_devices()
+        self.scan_devices(is_initial_scan=True)
         
         print(f"Detected devices: {self.devices}")
 
-        # Nach erfolgreichem Scan: Zentrale Discovery auslösen
-        if self.mqtt_client and self.devices:
-            print("[INFO] M-Bus Scan abgeschlossen - starte Discovery in 2 Sekunden...")
-            threading.Timer(2.0, self.mqtt_client.send_all_discovery).start()
+        # Nach erfolgreichem Initial-Scan wird Discovery automatisch getriggert (siehe scan_devices)
+        # Keine manuelle Discovery mehr nötig
 
         # Starte regelmäßiges Scannen im Hintergrund
         self.start_periodic_scan(scan_interval_minutes)
