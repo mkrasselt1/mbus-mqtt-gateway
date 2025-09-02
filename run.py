@@ -24,7 +24,9 @@ def signal_handler(signum, frame):
     # MQTT-Clients ordnungsgemäß trennen
     for client in mqtt_clients:
         try:
-            print(f"[INFO] Trenne MQTT-Client...")
+            print(f"[INFO] Sende Offline-Status und trenne MQTT-Client...")
+            # Sende Offline-Status vor dem Trennen
+            client.send_offline_status()
             client.disconnect()
         except Exception as e:
             print(f"[WARN] Fehler beim Trennen des MQTT-Clients: {e}")

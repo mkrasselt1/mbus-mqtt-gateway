@@ -61,6 +61,45 @@ class MQTTClient:
         
         print(f"[INFO] Discovery komplett")
 
+    def send_offline_status(self):
+        """
+        Sendet Offline-Status für alle Geräte beim Shutdown.
+        """
+        print("[INFO] === Sende Offline-Status für alle Geräte ===")
+        
+        try:
+            # Gateway selbst offline setzen
+            gateway_topic = f"{self.topic_prefix}/status"
+            self.client.publish(gateway_topic, "offline", retain=True)
+            print(f"[INFO] Gateway offline-Status gesendet: {gateway_topic}")
+            
+            # Alle M-Bus Geräte offline setzen
+            for callback in self.all_discovery_callbacks:
+                try:
+                    # Hier könnte man spezifische Offline-Callbacks haben
+                    # Für jetzt senden wir ein generisches Offline-Signal
+                    pass
+                except Exception as e:
+                    print(f"[ERROR] Fehler beim Offline-Status für {callback.__name__}: {e}")
+            
+            # Kurz warten damit die Nachrichten gesendet werden
+            time.sleep(1)
+            print("[INFO] Offline-Status komplett gesendet")
+            
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Senden des Offline-Status: {e}")
+
+    def send_online_status(self):
+        """
+        Sendet Online-Status für das Gateway beim Start.
+        """
+        try:
+            gateway_topic = f"{self.topic_prefix}/status"
+            self.client.publish(gateway_topic, "online", retain=True)
+            print(f"[INFO] Gateway online-Status gesendet: {gateway_topic}")
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Senden des Online-Status: {e}")
+
     def start_periodic_discovery(self, interval_minutes=5):
         """
         Startet regelmäßige Discovery-Sendung.
@@ -231,6 +270,8 @@ class MQTTClient:
                 
             if self.connected:
                 print("[INFO] MQTT-Verbindung erfolgreich hergestellt")
+                # Sende Online-Status
+                self.send_online_status()
                 # Starte regelmäßige Discovery (alle 5 Minuten)
                 self.start_periodic_discovery()
             else:
@@ -322,6 +363,9 @@ class MQTTClient:
         payload = {
             "name": "Gateway IP",
             "state_topic": f"{self.topic_prefix}/system/{mac}/ip",
+            "availability_topic": f"{self.topic_prefix}/status",
+            "payload_available": "online",
+            "payload_not_available": "offline",
             "unique_id": object_id,
             "icon": "mdi:ip-network",
             "device": {
@@ -341,6 +385,9 @@ class MQTTClient:
         payload = {
             "name": f"{device_name} Status",
             "state_topic": f"{self.topic_prefix}/device/{device_address}/status",
+            "availability_topic": f"{self.topic_prefix}/status",
+            "payload_available": "online",
+            "payload_not_available": "offline",
             "unique_id": object_id,
             "icon": "mdi:connection",
             "device": {
@@ -362,6 +409,9 @@ class MQTTClient:
         payload = {
             "name": "Connected M-Bus Devices",
             "state_topic": f"{self.topic_prefix}/gateway/{mac}/devices",
+            "availability_topic": f"{self.topic_prefix}/status",
+            "payload_available": "online",
+            "payload_not_available": "offline",
             "unique_id": object_id,
             "icon": "mdi:devices",
             "device": {

@@ -248,7 +248,6 @@ class MBusClient:
         frame = None
         
         if meterbus.is_primary_address(address):
-            print(f"Reading data from primary address {address}")
             if self.ping_address(ser, address, 2, read_echo=False):
                 self.send_request_frame_ud1(ser, address, read_echo=False)
                 frame = meterbus.load(
@@ -257,7 +256,6 @@ class MBusClient:
                 print("no reply")
 
         elif meterbus.is_secondary_address(address):
-            print(f"Reading data from secondary address {address}")
             meterbus.send_select_frame(ser, address, False)
             try:
                 frame = meterbus.load(meterbus.recv_frame(ser, 1))
@@ -362,6 +360,9 @@ class MBusClient:
                 "name": f"{sensor_name} ({address})",
                 "state_topic": f"{self.mqtt_client.topic_prefix}/meter/{address}",
                 "value_template": f"{{{{ value_json.records[{idx}].value }}}}",
+                "availability_topic": f"{self.mqtt_client.topic_prefix}/status",
+                "payload_available": "online",
+                "payload_not_available": "offline",
                 "unique_id": object_id,
                 "device": {
                     "identifiers": [f"mbus_meter_{address}"],
@@ -453,7 +454,7 @@ class MBusClient:
                         # Nur loggen wenn sich Daten geändert haben
                         current_values = [rec.get('value') for rec in data.get('records', [])]
                         if last_data_read.get(device) != current_values:
-                            print(f"Received {len(data.get('records', []))} records from device {device}")
+                            # print(f"Received {len(data.get('records', []))} records from device {device}")
                             last_data_read[device] = current_values
                         
                         self.publish_meter_data(device, data)
