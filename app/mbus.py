@@ -100,12 +100,59 @@ class MBusClient:
             ]
             self.mqtt_client.publish_gateway_discovery(mac, connected_devices)
 
+    def start_periodic_scan(self, interval_minutes):
+        """
+        Startet regelmäßiges Scannen nach neuen M-Bus Geräten im Hintergrund.
+        
+        :param interval_minutes: Intervall in Minuten zwischen den Scans
+        """
+        def periodic_scan():
+            while True:
+                try:
+                    time.sleep(interval_minutes * 60)  # Minuten in Sekunden
+                    print(f"[INFO] Starte regelmäßigen M-Bus Scan (alle {interval_minutes} Min)...")
+                    
+                    # Alte Geräteliste merken
+                    old_devices = set(self.devices)
+                    
+                    # Neuen Scan durchführen
+                    self.scan_devices()
+                    
+                    # Neue Geräte identifizieren
+                    new_devices = set(self.devices) - old_devices
+                    
+                    if new_devices:
+                        print(f"[INFO] {len(new_devices)} neue M-Bus Geräte gefunden: {list(new_devices)}")
+                        
+                        # Für neue Geräte erst mal Daten lesen um device_info zu füllen
+                        for device in new_devices:
+                            data = self.read_data_from_device(device)
+                            if data:
+                                print(f"[INFO] Neues Gerät {device} erfolgreich initialisiert")
+                        
+                        # Discovery für neue Geräte auslösen
+                        if self.mqtt_client:
+                            print("[INFO] Starte Discovery für neue Geräte in 2 Sekunden...")
+                            threading.Timer(2.0, self.mqtt_client.send_all_discovery).start()
+                    else:
+                        print(f"[INFO] Regelmäßiger M-Bus Scan abgeschlossen - keine neuen Geräte gefunden")
+                        
+                except Exception as e:
+                    print(f"[ERROR] Fehler beim regelmäßigen M-Bus Scan: {e}")
+        
+        # Scan-Thread starten
+        scan_thread = threading.Thread(target=periodic_scan, daemon=True, name="MBus-Scanner")
+        scan_thread.start()
+        print(f"[INFO] Regelmäßiger M-Bus Scan gestartet (alle {interval_minutes} Minuten)")
+
     def scan_devices(self):
         """
-        Scan for M-Bus devices on the network during startup.
-        :return: A list of secondary addresses (device IDs) of detected devices.
+        Scan for M-Bus devices on the network.
+        Thread-safe und vermeidet Dopplungen.
         """
-        print("Scanning for M-Bus devices...")
+        print("[INFO] Starte M-Bus Geräte-Scan...")
+        initial_device_count = len(self.devices)
+        
         try:
             with serial.serial_for_url(self.port,
                             self.baudrate, 8, 'E', 1, timeout=1) as ser:
@@ -116,11 +163,18 @@ class MBusClient:
                 self.mbus_scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF", False)
 
         except serial.SerialException as e:
-            print(e)
+            print(f"[ERROR] Serieller Fehler beim M-Bus Scan: {e}")
+            return
 
-            if not self.devices:
-                print("No devices found during startup scan.")
-                return
+        new_device_count = len(self.devices)
+        devices_found = new_device_count - initial_device_count
+        
+        if devices_found > 0:
+            print(f"[INFO] M-Bus Scan abgeschlossen: {devices_found} neue Geräte gefunden")
+        elif initial_device_count == 0:
+            print("[WARN] M-Bus Scan abgeschlossen: Keine Geräte gefunden")
+        else:
+            print(f"[INFO] M-Bus Scan abgeschlossen: Keine neuen Geräte (Total: {new_device_count})")
 
     def read_data_from_device(self, address):
         """
@@ -368,11 +422,14 @@ class MBusClient:
             print(f"Data for device {address} is not in expected format, skipping publish.")
             print(f"Data({type(data)}): {data}")
 
-    def start(self):
+    def start(self, scan_interval_minutes=60):
         """
         Perform a one-time scan for devices on startup, then continuously read data from all detected devices.
+        Rescans for new devices every scan_interval_minutes.
+        
+        :param scan_interval_minutes: Intervall in Minuten für erneutes Scannen nach neuen Geräten (Standard: 60 Min)
         """
-        # Scan for devices on startup
+        # Initial scan for devices on startup
         self.scan_devices()
         
         print(f"Detected devices: {self.devices}")
@@ -382,13 +439,23 @@ class MBusClient:
             print("[INFO] M-Bus Scan abgeschlossen - starte Discovery in 2 Sekunden...")
             threading.Timer(2.0, self.mqtt_client.send_all_discovery).start()
 
+        # Starte regelmäßiges Scannen im Hintergrund
+        self.start_periodic_scan(scan_interval_minutes)
+
         # Continuously read data from all detected devices
         try:
+            last_data_read = {}  # Tracking für Datenänderungen
+            
             while True:
                 for device in self.devices:
                     data = self.read_data_from_device(device)
                     if data:
-                        print(f"Received {len(data.get('records', []))} records from device {device}")
+                        # Nur loggen wenn sich Daten geändert haben
+                        current_values = [rec.get('value') for rec in data.get('records', [])]
+                        if last_data_read.get(device) != current_values:
+                            print(f"Received {len(data.get('records', []))} records from device {device}")
+                            last_data_read[device] = current_values
+                        
                         self.publish_meter_data(device, data)
                     else:
                         # Device offline - publiziere offline Status
@@ -444,9 +511,12 @@ class MBusClient:
                 new_mask = (mask[:pos] + "{0:1X}".format(i) + mask[pos+1:]).upper()
                 val, match, manufacturer = self.mbus_probe_secondary_address(ser, new_mask, read_echo)
                 if val is True:
-                    print("Device found with id {0} ({1}), using mask {2}".format(
-                    match, manufacturer, new_mask))
-                    self.devices.append(match)  # Store the found device
+                    if match not in self.devices:  # Duplikatsprüfung
+                        print("Device found with id {0} ({1}), using mask {2}".format(
+                        match, manufacturer, new_mask))
+                        self.devices.append(match)  # Store the found device
+                    else:
+                        print("Device {0} already known, skipping".format(match))
                 elif val is False:  # Collision
                     self.mbus_scan_secondary_address_range(ser, pos+1, new_mask, read_echo)
 

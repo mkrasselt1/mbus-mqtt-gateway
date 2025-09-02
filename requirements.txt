@@ -1,4 +1,4 @@
-flask
+# flask  # Webserver entfernt für bessere Sicherheit
 paho-mqtt
 pyMeterBus
 pyserial

@@ -81,20 +81,20 @@ class MQTTClient:
         
         print(f"[INFO] Discovery komplett - {len(self.discovery_messages)} Nachrichten gesendet")
 
-    def start_periodic_discovery(self, interval_hours=1):
+    def start_periodic_discovery(self, interval_minutes=5):
         """
         Startet regelmäßige Discovery-Sendung.
         """
         def periodic_discovery():
             while True:
-                time.sleep(interval_hours * 3600)  # Stunden in Sekunden
+                time.sleep(interval_minutes * 60)  # Minuten in Sekunden
                 if self.connected:
-                    print(f"[INFO] Regelmäßige Discovery nach {interval_hours}h")
+                    print(f"[INFO] Regelmäßige Discovery nach {interval_minutes} Minuten")
                     self.send_all_discovery()
         
         discovery_thread = threading.Thread(target=periodic_discovery, daemon=True)
         discovery_thread.start()
-        print(f"[INFO] Regelmäßige Discovery gestartet (alle {interval_hours}h)")
+        print(f"[INFO] Regelmäßige Discovery gestartet (alle {interval_minutes} Minuten)")
 
     def _on_connect(self, client, userdata, flags, rc):
         """Callback für erfolgreiche MQTT-Verbindung"""
@@ -251,8 +251,8 @@ class MQTTClient:
                 
             if self.connected:
                 print("[INFO] MQTT-Verbindung erfolgreich hergestellt")
-                # Starte regelmäßige Discovery (alle 1 Stunde)
-                self.start_periodic_discovery(1)
+                # Starte regelmäßige Discovery (alle 5 Minuten)
+                self.start_periodic_discovery()
             else:
                 print("[WARN] MQTT-Verbindung timeout - versuche weiter im Hintergrund")
                 

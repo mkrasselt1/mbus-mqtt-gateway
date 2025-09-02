@@ -1,7 +1,6 @@
 from multiprocessing import Process
 from app.mbus import MBusClient
 from app.mqtt import MQTTClient
-from app.web import app
 from app.config import Config
 import socket
 import time
@@ -69,8 +68,11 @@ def start_mbus_to_mqtt():
         baudrate=config.data["mbus_baudrate"],
         mqtt_client=mqtt_client,)
     
+    # Scan-Intervall aus Konfiguration lesen (Standard: 60 Minuten)
+    scan_interval = config.data.get("mbus_scan_interval_minutes", 60)
+    
     try:
-        mbus_client.start()
+        mbus_client.start(scan_interval_minutes=scan_interval)
     except KeyboardInterrupt:
         print("[INFO] M-Bus Service beendet durch Benutzer")
     except Exception as e:
@@ -161,10 +163,20 @@ if __name__ == "__main__":
         ip_process.start()
         
         print("[INFO] Alle Services gestartet")
+        print("[INFO] MBus MQTT Gateway läuft...")
         print("[INFO] Drücken Sie Strg+C für sauberes Herunterfahren")
         
-        # Web-Server im Hauptthread starten
-        app.run(host="0.0.0.0", port=5000)
+        # Hauptthread wartet auf Prozesse (ohne Webserver)
+        try:
+            while not shutdown_flag:
+                # Prüfe ob Prozesse noch leben
+                for process in processes:
+                    if not process.is_alive():
+                        print(f"[WARN] Prozess {process.name} ist unerwartet beendet")
+                
+                time.sleep(5)  # Alle 5 Sekunden prüfen
+        except KeyboardInterrupt:
+            pass  # Wird vom Signal-Handler behandelt
         
     except KeyboardInterrupt:
         print("[INFO] Hauptprozess beendet durch Benutzer")
