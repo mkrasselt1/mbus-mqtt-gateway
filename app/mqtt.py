@@ -15,13 +15,8 @@ class MQTTClient:
         self.reconnect_thread = None
         self.should_reconnect = True
         
-        # Discovery-Cache für Wiederholung bei Reconnect
-        self.discovery_messages = {}
-        self.reconnect_callback = None
-        
         # Home Assistant Status Tracking
         self.ha_online = False
-        self.pending_discovery = []  # Queue für Discovery-Nachrichten bis HA online ist
         self.discovery_timer = None  # Timer für regelmäßige Discovery
         self.all_discovery_callbacks = []  # Liste aller Discovery-Callbacks
 
@@ -56,22 +51,7 @@ class MQTTClient:
         """
         print("[INFO] === Sende alle Discovery-Nachrichten ===")
         
-        # 1. Gecachte Discovery-Nachrichten senden
-        for topic, payload in self.discovery_messages.items():
-            self.client.publish(topic, payload)
-            print(f"[DEBUG] Gecachte Discovery gesendet: {topic}")
-        
-        # 2. Wartende Discovery-Nachrichten senden
-        for discovery_data in self.pending_discovery:
-            topic = discovery_data['topic']
-            payload = discovery_data['payload']
-            self.client.publish(topic, payload)
-            self.discovery_messages[topic] = payload  # In Cache aufnehmen
-            print(f"[DEBUG] Wartende Discovery gesendet: {topic}")
-        
-        self.pending_discovery.clear()
-        
-        # 3. Alle registrierten Discovery-Callbacks ausführen
+        # Alle registrierten Discovery-Callbacks ausführen
         for callback in self.all_discovery_callbacks:
             try:
                 callback()
@@ -79,7 +59,7 @@ class MQTTClient:
             except Exception as e:
                 print(f"[ERROR] Fehler beim Ausführen von Discovery-Callback {callback.__name__}: {e}")
         
-        print(f"[INFO] Discovery komplett - {len(self.discovery_messages)} Nachrichten gesendet")
+        print(f"[INFO] Discovery komplett")
 
     def start_periodic_discovery(self, interval_minutes=5):
         """
@@ -324,8 +304,7 @@ class MQTTClient:
 
     def publish_discovery(self, component, object_id, payload):
         """
-        Veröffentlicht eine allgemeine Home Assistant Discovery-Nachricht.
-        Wird zur Warteschlange hinzugefügt und bei nächster Discovery-Sendung gesendet.
+        Veröffentlicht eine allgemeine Home Assistant Discovery-Nachricht direkt.
         component: z.B. 'sensor', 'switch', 'binary_sensor'
         object_id: z.B. 'mbus_gateway_ip'
         payload: dict mit den Discovery-Informationen
@@ -333,12 +312,9 @@ class MQTTClient:
         discovery_topic = f"homeassistant/{component}/{object_id}/config"
         payload_json = json.dumps(payload)
         
-        # Immer zur Warteschlange hinzufügen - wird bei nächster send_all_discovery() gesendet
-        print(f"[DEBUG] Discovery zur Warteschlange hinzugefügt: {discovery_topic}")
-        self.pending_discovery.append({
-            'topic': discovery_topic,
-            'payload': payload_json
-        })
+        # Direkt senden ohne Cache
+        self.client.publish(discovery_topic, payload_json)
+        print(f"[DEBUG] Discovery direkt gesendet: {discovery_topic}")
 
     # Optional: Convenience-Methode für IP-Sensor
     def publish_ip_discovery(self, mac):
