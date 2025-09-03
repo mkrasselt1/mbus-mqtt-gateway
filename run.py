@@ -129,9 +129,7 @@ if __name__ == "__main__":
         # MQTT Verbindung aufbauen
         if mqtt_client.connect():
             print("[INFO] MQTT erfolgreich verbunden")
-            
-            # Periodisches Publishing starten
-            mqtt_client.start_periodic_publishing(60)  # Alle 60 Sekunden
+            print("[INFO] MQTT State wird automatisch bei Datenänderungen veröffentlicht")
         else:
             print("[WARN] MQTT Verbindung fehlgeschlagen - fahre ohne MQTT fort")
         

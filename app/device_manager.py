@@ -216,14 +216,19 @@ class DeviceManager:
     
     def update_gateway_ip(self):
         """Aktualisiert die Gateway IP-Adresse"""
+        old_ip = None
+        if self.gateway_id in self.devices:
+            old_ip = self.devices[self.gateway_id].get_attribute_value("ip_address")
+        
         new_ip = self._get_local_ip()
         self.update_device_attribute(self.gateway_id, "ip_address", new_ip)
         
-        # MQTT State Update für Gateway senden
-        if self.mqtt_client and self.gateway_id in self.devices:
+        # MQTT State Update nur bei IP-Änderung senden
+        if self.mqtt_client and old_ip != new_ip and self.gateway_id in self.devices:
             device = self.devices[self.gateway_id]
             try:
                 self.mqtt_client.publish_device_state(device)
+                print(f"[INFO] Gateway IP geändert: {old_ip} → {new_ip}")
             except Exception as e:
                 print(f"[WARN] MQTT State Update fehlgeschlagen für Gateway: {e}")
     
@@ -231,8 +236,8 @@ class DeviceManager:
         """Aktualisiert die Gateway Uptime"""
         self.update_device_attribute(self.gateway_id, "uptime", uptime_seconds, "seconds")
         
-        # MQTT State Update für Gateway senden (nur alle 60 Sekunden um Traffic zu reduzieren)
-        if self.mqtt_client and uptime_seconds % 60 == 0 and self.gateway_id in self.devices:
+        # MQTT State Update für Gateway senden (nur alle 5 Minuten um Traffic zu reduzieren)
+        if self.mqtt_client and uptime_seconds % 300 == 0 and self.gateway_id in self.devices:
             device = self.devices[self.gateway_id]
             try:
                 self.mqtt_client.publish_device_state(device)

@@ -297,10 +297,14 @@ class HomeAssistantMQTT:
                 self._send_device_discovery(device)
                 time.sleep(0.1)  # Kurze Pause zwischen Geräten
     
-    def publish_device_state(self, device: Device):
+    def publish_device_state(self, device: Device, check_new_attributes: bool = True):
         """Veröffentlicht den aktuellen Status eines Geräts"""
         if not self.connected:
             return False
+        
+        # Prüfe auf neue Attribute und sende Discovery falls nötig
+        if check_new_attributes:
+            self._check_and_send_discovery_for_new_attributes(device)
         
         # State aus allen Attributen zusammenstellen
         state = {}
@@ -319,6 +323,43 @@ class HomeAssistantMQTT:
         
         return success
     
+    def _check_and_send_discovery_for_new_attributes(self, device: Device):
+        """Prüft ob es neue Attribute gibt und sendet Discovery dafür"""
+        if not self.connected:
+            return
+        
+        new_attributes = []
+        
+        with self._lock:
+            for attr_name in device.attributes.keys():
+                discovery_key = f"{device.device_id}_{attr_name}"
+                if discovery_key not in self.discovery_sent:
+                    new_attributes.append(attr_name)
+        
+        # Discovery für neue Attribute senden
+        if new_attributes:
+            print(f"[MQTT] Neue Attribute erkannt für {device.name}: {new_attributes}")
+            for attr_name in new_attributes:
+                config = self._generate_discovery_config(device, attr_name)
+                if config:
+                    # Discovery Topic
+                    component = "binary_sensor" if device.attributes[attr_name].value_type == "binary_sensor" else "sensor"
+                    object_id = f"{device.device_id}_{attr_name}".replace(" ", "_").lower()
+                    discovery_topic = f"homeassistant/{component}/{object_id}/config"
+                    
+                    # Discovery Config senden
+                    config_json = json.dumps(config)
+                    if self.publish(discovery_topic, config_json, retain=True):
+                        # Discovery als gesendet markieren
+                        discovery_key = f"{device.device_id}_{attr_name}"
+                        with self._lock:
+                            self.discovery_sent.add(discovery_key)
+                            self.last_discovery_time[discovery_key] = time.time()
+                        
+                        print(f"[MQTT] Discovery für neues Attribut {attr_name} gesendet")
+                    
+                    time.sleep(0.1)  # Kurze Pause zwischen Discovery-Nachrichten
+    
     def publish_all_device_states(self):
         """Veröffentlicht den Status aller Geräte"""
         devices = device_manager.get_all_devices()
@@ -327,28 +368,6 @@ class HomeAssistantMQTT:
             if device.attributes:  # Nur Geräte mit Attributen
                 self.publish_device_state(device)
                 time.sleep(0.05)  # Kurze Pause zwischen Geräten
-    
-    def start_periodic_publishing(self, interval_seconds: int = 60):
-        """Startet periodisches Veröffentlichen der Gerätestatus"""
-        def publish_loop():
-            while self.connected:
-                try:
-                    self.publish_all_device_states()
-                    
-                    # Warten mit Disconnect-Check
-                    for _ in range(interval_seconds):
-                        if not self.connected:
-                            break
-                        time.sleep(1)
-                        
-                except Exception as e:
-                    print(f"[MQTT] Fehler beim periodischen Publishing: {e}")
-                    time.sleep(10)
-        
-        if self.connected:
-            thread = threading.Thread(target=publish_loop, daemon=True)
-            thread.start()
-            print(f"[MQTT] Periodisches Publishing gestartet (alle {interval_seconds}s)")
     
     def force_rediscovery(self):
         """Erzwingt erneute Discovery für alle Geräte"""
