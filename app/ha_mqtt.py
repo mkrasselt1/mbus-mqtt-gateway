@@ -142,6 +142,26 @@ class HomeAssistantMQTT:
             print(f"[MQTT] Fehler beim Veröffentlichen: {e}")
             return False
     
+    def _ensure_json_serializable(self, value):
+        """Stellt sicher, dass ein Wert JSON-serialisierbar ist"""
+        from decimal import Decimal
+        
+        if isinstance(value, Decimal):
+            try:
+                return round(float(value), 4)
+            except (ValueError, OverflowError):
+                return str(value)
+        elif isinstance(value, float):
+            return round(value, 4)
+        elif hasattr(value, '__class__') and 'Decimal' in str(type(value)):
+            # Fallback für dynamisch geladene Decimal-Klassen
+            try:
+                return round(float(value), 4)
+            except (ValueError, OverflowError, TypeError):
+                return str(value)
+        else:
+            return value
+    
     def _generate_discovery_config(self, device: Device, attribute_name: str) -> Optional[Dict]:
         """Generiert Home Assistant Discovery Config für ein Geräte-Attribut"""
         attribute = device.attributes.get(attribute_name)
@@ -310,11 +330,8 @@ class HomeAssistantMQTT:
         state = {}
         for attr_name, attribute in device.attributes.items():
             value = attribute.value
-            # Decimal zu Float konvertieren für JSON Serialisierung
-            if hasattr(value, '__class__') and 'Decimal' in str(type(value)):
-                value = round(float(value), 4)
-            elif isinstance(value, float):
-                value = round(value, 4)
+            # Robuste Decimal/Float Konvertierung für JSON Serialisierung
+            value = self._ensure_json_serializable(value)
             state[attr_name] = value
         
         # State Topic

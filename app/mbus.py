@@ -124,10 +124,17 @@ class MBusClient:
                     # Bestimme Namen basierend auf der Einheit
                     name = self.get_sensor_name_from_unit(rec.unit, idx)
                     
-                    # Wert auf 4 Nachkommastellen begrenzen falls es eine Zahl ist
+                    # Wert konvertieren und auf 4 Nachkommastellen begrenzen
                     value = rec.value
                     if isinstance(value, (float, int)):
                         value = round(float(value), 4)
+                    elif hasattr(value, '__class__') and 'Decimal' in str(type(value)):
+                        # Decimal zu float konvertieren
+                        try:
+                            value = round(float(value), 4)
+                        except (ValueError, OverflowError):
+                            # Fallback für sehr große Decimal-Werte
+                            value = str(value)
                     
                     recs.append({
                         'value': value,

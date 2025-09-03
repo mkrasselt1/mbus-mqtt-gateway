@@ -5,6 +5,7 @@ import threading
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 
 @dataclass
 class DeviceAttribute:
@@ -17,7 +18,15 @@ class DeviceAttribute:
     
     def update_value(self, new_value: Any):
         """Aktualisiert den Wert und Zeitstempel"""
-        self.value = new_value
+        # Konvertiere Decimal zu float für JSON-Kompatibilität
+        if isinstance(new_value, Decimal):
+            try:
+                self.value = float(new_value)
+            except (ValueError, OverflowError):
+                # Fallback für sehr große oder ungültige Decimal-Werte
+                self.value = str(new_value)
+        else:
+            self.value = new_value
         self.last_updated = time.time()
 
 @dataclass
