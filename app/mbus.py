@@ -120,9 +120,31 @@ class MBusClient:
                 
                 # Standard-Records sammeln
                 recs = []
+                energy_counter = 0  # Zähler für Energie-Records
+                
                 for idx, rec in enumerate(frame.records):
                     # Bestimme Namen basierend auf der Einheit
-                    name = self.get_sensor_name_from_unit(rec.unit, idx)
+                    base_name = self.get_sensor_name_from_unit(rec.unit, idx)
+                    
+                    # Spezielle Behandlung für Energie-Records
+                    if "Energie" in base_name and rec.unit.lower() in ["wh", "kwh", "mwh"]:
+                        energy_counter += 1
+                        value = rec.value
+                        
+                        # Differenziere zwischen Bezug und Einspeisung
+                        if isinstance(value, (int, float)) or hasattr(value, '__float__'):
+                            try:
+                                float_value = float(value)
+                                if float_value >= 0:
+                                    name = f"Energie Bezug ({rec.unit})"
+                                else:
+                                    name = f"Energie Einspeisung ({rec.unit})"
+                            except (ValueError, TypeError):
+                                name = f"{base_name} {energy_counter}"
+                        else:
+                            name = f"{base_name} {energy_counter}"
+                    else:
+                        name = base_name
                     
                     # Wert konvertieren und auf 4 Nachkommastellen begrenzen
                     value = rec.value

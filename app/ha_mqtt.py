@@ -167,7 +167,9 @@ class HomeAssistantMQTT:
         # Spezielle Mappings für häufige Attribute
         name_mappings = {
             "energie_wh": "Energie",
-            "energie": "Energie", 
+            "energie": "Energie",
+            "energie_bezug_wh": "Energie Bezug",
+            "energie_einspeisung_wh": "Energie Einspeisung", 
             "wirkleistung_w": "Wirkleistung",
             "wirkleistung": "Wirkleistung",
             "leistung_w": "Leistung",
@@ -189,6 +191,15 @@ class HomeAssistantMQTT:
         # Spezielle Mappings prüfen
         if normalized in name_mappings:
             return name_mappings[normalized]
+        
+        # Energie-Varianten
+        if "energie" in normalized:
+            if "bezug" in normalized:
+                return "Energie Bezug"
+            elif "einspeisung" in normalized:
+                return "Energie Einspeisung"
+            else:
+                return "Energie"
         
         # Zählerstände
         if "zahlerstand" in normalized or "zaehlerstand" in normalized:
