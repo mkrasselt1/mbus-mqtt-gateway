@@ -65,6 +65,9 @@ class DeviceManager:
         self._lock = threading.Lock()
         self.gateway_id = self._get_gateway_id()
         
+        # MQTT Client Referenz (wird später gesetzt)
+        self.mqtt_client = None
+        
         # Gateway-Gerät initialisieren
         self._initialize_gateway()
     
@@ -105,6 +108,11 @@ class DeviceManager:
             
             self.devices[self.gateway_id] = gateway
             print(f"[INFO] Gateway initialisiert: {self.gateway_id}")
+    
+    def set_mqtt_client(self, mqtt_client):
+        """Setzt den MQTT Client für automatische Updates"""
+        self.mqtt_client = mqtt_client
+        print(f"[INFO] MQTT Client an DeviceManager gekoppelt")
     
     def add_or_update_device(self, device_id: str, device_type: str = "mbus_meter", 
                            name: Optional[str] = None, manufacturer: str = "Unknown", 
@@ -164,6 +172,14 @@ class DeviceManager:
         # Status-Attribut setzen
         self.update_device_attribute(device_id, "status", "online", "", "binary_sensor")
         
+        # MQTT State Update senden (falls MQTT Client verfügbar)
+        if self.mqtt_client and device_id in self.devices:
+            device = self.devices[device_id]
+            try:
+                self.mqtt_client.publish_device_state(device)
+            except Exception as e:
+                print(f"[WARN] MQTT State Update fehlgeschlagen für {device_id}: {e}")
+        
         print(f"[INFO] M-Bus Gerät {device_id} aktualisiert mit {len(records)} Attributen")
     
     def set_device_offline(self, device_id: str):
@@ -172,6 +188,15 @@ class DeviceManager:
             if device_id in self.devices:
                 self.devices[device_id].set_offline()
                 self.update_device_attribute(device_id, "status", "offline", "", "binary_sensor")
+                
+                # MQTT State Update senden (falls MQTT Client verfügbar)
+                if self.mqtt_client:
+                    device = self.devices[device_id]
+                    try:
+                        self.mqtt_client.publish_device_state(device)
+                    except Exception as e:
+                        print(f"[WARN] MQTT State Update fehlgeschlagen für {device_id}: {e}")
+                
                 print(f"[INFO] Gerät {device_id} als offline markiert")
     
     def get_device(self, device_id: str) -> Optional[Device]:
@@ -193,10 +218,26 @@ class DeviceManager:
         """Aktualisiert die Gateway IP-Adresse"""
         new_ip = self._get_local_ip()
         self.update_device_attribute(self.gateway_id, "ip_address", new_ip)
+        
+        # MQTT State Update für Gateway senden
+        if self.mqtt_client and self.gateway_id in self.devices:
+            device = self.devices[self.gateway_id]
+            try:
+                self.mqtt_client.publish_device_state(device)
+            except Exception as e:
+                print(f"[WARN] MQTT State Update fehlgeschlagen für Gateway: {e}")
     
     def update_gateway_uptime(self, uptime_seconds: int):
         """Aktualisiert die Gateway Uptime"""
         self.update_device_attribute(self.gateway_id, "uptime", uptime_seconds, "seconds")
+        
+        # MQTT State Update für Gateway senden (nur alle 60 Sekunden um Traffic zu reduzieren)
+        if self.mqtt_client and uptime_seconds % 60 == 0 and self.gateway_id in self.devices:
+            device = self.devices[self.gateway_id]
+            try:
+                self.mqtt_client.publish_device_state(device)
+            except Exception as e:
+                print(f"[WARN] MQTT State Update fehlgeschlagen für Gateway: {e}")
     
     def print_status(self):
         """Gibt eine Übersicht aller Geräte und deren Status aus"""

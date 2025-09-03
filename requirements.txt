@@ -2,3 +2,5 @@
 pyMeterBus
 # Serial communication
 pyserial
+# MQTT client for Home Assistant integration
+paho-mqtt

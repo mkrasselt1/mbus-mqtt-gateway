@@ -2,22 +2,33 @@ from multiprocessing import Process
 from app.mbus import MBusClient
 from app.config import Config
 from app.device_manager import device_manager
+from app.ha_mqtt import HomeAssistantMQTT
 import signal
 import sys
 import time
+import threading
 
 # Globale Variablen für sauberes Shutdown
 shutdown_flag = False
 processes = []
 start_time = time.time()  # Für Uptime-Berechnung
+mqtt_client = None  # Globale MQTT Client Referenz
 
 def signal_handler(signum, frame):
     """Signal-Handler für sauberes Shutdown bei Strg+C"""
-    global shutdown_flag
+    global shutdown_flag, mqtt_client
     print("\n[INFO] Shutdown-Signal empfangen (Strg+C)...")
     print("[INFO] Starte sauberes Herunterfahren...")
     
     shutdown_flag = True
+    
+    # MQTT Client ordnungsgemäß trennen
+    if mqtt_client:
+        try:
+            print("[INFO] Trenne MQTT Verbindung...")
+            mqtt_client.disconnect()
+        except Exception as e:
+            print(f"[WARN] Fehler beim MQTT Disconnect: {e}")
     
     # Prozesse beenden
     for process in processes:
@@ -98,24 +109,46 @@ def start_gateway_monitoring():
 
 if __name__ == "__main__":
     try:
-        print("[INFO] Starte MBus Scanner mit zentraler Geräteverwaltung...")
+        print("[INFO] Starte MBus Scanner mit Home Assistant MQTT Integration...")
         
-        # Einfachere Lösung: Alles in einem Thread
         config = Config()
+        
+        # MQTT Client für Home Assistant initialisieren
+        print("[INFO] Initialisiere Home Assistant MQTT Client...")
+        mqtt_client = HomeAssistantMQTT(
+            broker=config.data["mqtt_broker"],
+            port=config.data["mqtt_port"],
+            username=config.data.get("mqtt_username", ""),
+            password=config.data.get("mqtt_password", ""),
+            topic_prefix=config.data.get("mqtt_topic", "homeassistant")
+        )
+        
+        # MQTT Client mit DeviceManager verknüpfen
+        device_manager.set_mqtt_client(mqtt_client)
+        
+        # MQTT Verbindung aufbauen
+        if mqtt_client.connect():
+            print("[INFO] MQTT erfolgreich verbunden")
+            
+            # Periodisches Publishing starten
+            mqtt_client.start_periodic_publishing(60)  # Alle 60 Sekunden
+        else:
+            print("[WARN] MQTT Verbindung fehlgeschlagen - fahre ohne MQTT fort")
         
         # M-Bus Client initialisieren  
         mbus_client = MBusClient(
             port=config.data["mbus_port"],
             baudrate=config.data["mbus_baudrate"],
-            mqtt_client=None
+            mqtt_client=None  # Wird über DeviceManager gekoppelt
         )
         
-        print("[INFO] M-Bus Scanner gestartet")
-        print("[INFO] Gateway-Monitoring gestartet")
+        print("[INFO] Alle Services gestartet:")
+        print("[INFO] - M-Bus Scanner: Scannt und liest M-Bus Geräte")
+        print("[INFO] - Gateway-Monitoring: Überwacht Gateway-Status")
+        print("[INFO] - Home Assistant MQTT: Auto-Discovery und State Publishing")
         print("[INFO] Drücken Sie Strg+C für sauberes Herunterfahren")
         
         # Gateway-Monitoring in separatem Thread
-        import threading
         gateway_thread = threading.Thread(target=start_gateway_monitoring, name="Gateway-Monitoring", daemon=True)
         gateway_thread.start()
         
