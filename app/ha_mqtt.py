@@ -177,8 +177,9 @@ class HomeAssistantMQTT:
             "sw_version": device.sw_version
         }
         
-        # Object ID für eindeutige Identifizierung
-        object_id = f"{device.device_id}_{attribute_name}".replace(" ", "_").lower()
+        # Object ID für eindeutige Identifizierung (MQTT-kompatibel)
+        safe_attr_name = attribute_name.replace(" ", "_").replace("(", "").replace(")", "").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").lower()
+        object_id = f"{device.device_id}_{safe_attr_name}"
         
         # Component Type basierend auf Attribut-Typ bestimmen
         component = "sensor"
@@ -187,8 +188,8 @@ class HomeAssistantMQTT:
         elif attribute.value_type == "switch":
             component = "switch"
         
-        # State Topic - SEPARATE für jedes Attribut
-        state_topic = f"{self.topic_prefix}/device/{device.device_id}/{attribute_name}"
+        # State Topic - SEPARATE für jedes Attribut (MQTT-kompatibel)
+        state_topic = f"{self.topic_prefix}/device/{device.device_id}/{safe_attr_name}"
         
         # Discovery Config
         config = {
@@ -332,8 +333,11 @@ class HomeAssistantMQTT:
             # Robuste Decimal/Float Konvertierung für JSON Serialisierung
             value = self._ensure_json_serializable(value)
             
+            # MQTT-kompatiblen Attributnamen erstellen
+            safe_attr_name = attr_name.replace(" ", "_").replace("(", "").replace(")", "").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").lower()
+            
             # Separater State Topic für dieses Attribut
-            state_topic = f"{self.topic_prefix}/device/{device.device_id}/{attr_name}"
+            state_topic = f"{self.topic_prefix}/device/{device.device_id}/{safe_attr_name}"
             
             # Direkten Wert (nicht JSON) senden
             try:
