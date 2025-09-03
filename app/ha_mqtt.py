@@ -372,21 +372,27 @@ class HomeAssistantMQTT:
             for attr_name in new_attributes:
                 config = self._generate_discovery_config(device, attr_name)
                 if config:
-                    # Discovery Topic
+                    # Discovery Topic mit KONSISTENTER Object-ID-Generierung
                     component = "binary_sensor" if device.attributes[attr_name].value_type == "binary_sensor" else "sensor"
-                    object_id = f"{device.device_id}_{attr_name}".replace(" ", "_").lower()
+                    
+                    # GLEICHE Bereinigung wie in _generate_discovery_config
+                    safe_attr_name = attr_name.replace(" ", "_").replace("(", "").replace(")", "").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").lower()
+                    object_id = f"{device.device_id}_{safe_attr_name}"
+                    
                     discovery_topic = f"homeassistant/{component}/{object_id}/config"
                     
                     # Discovery Config senden
                     config_json = json.dumps(config)
                     if self.publish(discovery_topic, config_json, retain=True):
-                        # Discovery als gesendet markieren
+                        # Discovery als gesendet markieren (mit ORIGINALNAMEN)
                         discovery_key = f"{device.device_id}_{attr_name}"
                         with self._lock:
                             self.discovery_sent.add(discovery_key)
                             self.last_discovery_time[discovery_key] = time.time()
                         
                         print(f"[MQTT] Discovery für neues Attribut {attr_name} gesendet")
+                    else:
+                        print(f"[MQTT] Fehler beim Senden der Discovery für {attr_name}")
                     
                     time.sleep(0.1)  # Kurze Pause zwischen Discovery-Nachrichten
     
