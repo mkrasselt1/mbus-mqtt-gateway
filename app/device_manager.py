@@ -245,11 +245,15 @@ class DeviceManager:
         """Aktualisiert die Gateway Uptime"""
         self.update_device_attribute(self.gateway_id, "uptime", uptime_seconds, "seconds")
         
-        # MQTT State Update für Gateway senden (nur alle 5 Minuten um Traffic zu reduzieren)
-        if self.mqtt_client and uptime_seconds % 300 == 0 and self.gateway_id in self.devices:
+        # Status auch aktualisieren
+        self.update_device_attribute(self.gateway_id, "status", "online", "", "binary_sensor")
+        
+        # MQTT State Update für Gateway senden (alle 60 Sekunden für Lebenszeichen)
+        if self.mqtt_client and uptime_seconds % 60 == 0 and self.gateway_id in self.devices:
             device = self.devices[self.gateway_id]
             try:
-                self.mqtt_client.publish_device_state(device)
+                self.mqtt_client.publish_device_state(device, check_new_attributes=False)
+                # print(f"[DEBUG] Gateway Status Update gesendet (Uptime: {uptime_seconds}s)")
             except Exception as e:
                 print(f"[WARN] MQTT State Update fehlgeschlagen für Gateway: {e}")
     

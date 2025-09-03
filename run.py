@@ -96,14 +96,14 @@ def start_gateway_monitoring():
             if uptime % 60 == 0:  # Jede Minute
                 print(f"[DEBUG] Gateway Uptime: {uptime} Sekunden ({uptime//60} Minuten)")
             
-            # Status nur alle 5 Minuten ausgeben (10 * 30 Sekunden)
+            # Status nur alle 5 Minuten ausgeben (20 * 15 Sekunden)
             status_counter += 1
-            if status_counter >= 10:
+            if status_counter >= 20:
                 device_manager.print_status()
                 status_counter = 0
             
-            # 30 Sekunden warten (mit Shutdown-Check)
-            for _ in range(30):
+            # 15 Sekunden warten (mit Shutdown-Check) - häufigere Updates
+            for _ in range(15):
                 if shutdown_flag:
                     break
                 time.sleep(1)
