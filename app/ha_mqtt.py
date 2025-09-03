@@ -162,6 +162,52 @@ class HomeAssistantMQTT:
         else:
             return value
     
+    def _get_friendly_sensor_name(self, attribute_name: str, unit: str = "") -> str:
+        """Erstellt einen kurzen, benutzerfreundlichen Sensor-Namen"""
+        # Spezielle Mappings für häufige Attribute
+        name_mappings = {
+            "energie_wh": "Energie",
+            "energie": "Energie", 
+            "wirkleistung_w": "Wirkleistung",
+            "wirkleistung": "Wirkleistung",
+            "leistung_w": "Leistung",
+            "leistung": "Leistung",
+            "spannung_v": "Spannung",
+            "spannung": "Spannung",
+            "strom_a": "Strom",
+            "strom": "Strom",
+            "temperatur": "Temperatur",
+            "temperatur_c": "Temperatur",
+            "ip_address": "IP-Adresse",
+            "uptime": "Laufzeit",
+            "status": "Status",
+        }
+        
+        # Normalisierte Version für Vergleich
+        normalized = attribute_name.lower().replace(" ", "_").replace("(", "").replace(")", "")
+        
+        # Spezielle Mappings prüfen
+        if normalized in name_mappings:
+            return name_mappings[normalized]
+        
+        # Zählerstände
+        if "zahlerstand" in normalized or "zaehlerstand" in normalized:
+            number = normalized.split("_")[-1] if "_" in normalized else ""
+            return f"Zählerstand {number}" if number.isdigit() else "Zählerstand"
+        
+        # Messwerte
+        if "messwert" in normalized:
+            parts = normalized.split("_")
+            if len(parts) >= 2 and parts[1].isdigit():
+                return f"Messwert {parts[1]}"
+            return "Messwert"
+        
+        # Fallback: Ersten Teil des Attributnamens verwenden und bereinigen
+        clean_name = attribute_name.split("(")[0].strip()  # Entfernt Einheit in Klammern
+        clean_name = clean_name.replace("_", " ").title()  # Unterstriche zu Leerzeichen, Titel-Case
+        
+        return clean_name
+    
     def _generate_discovery_config(self, device: Device, attribute_name: str) -> Optional[Dict]:
         """Generiert Home Assistant Discovery Config für ein Geräte-Attribut"""
         attribute = device.attributes.get(attribute_name)
@@ -193,7 +239,7 @@ class HomeAssistantMQTT:
         
         # Discovery Config
         config = {
-            "name": f"{device.name} {attribute_name}",
+            "name": self._get_friendly_sensor_name(attribute_name, attribute.unit),
             "unique_id": object_id,
             "state_topic": state_topic,
             "device": device_info,
