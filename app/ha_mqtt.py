@@ -187,8 +187,8 @@ class HomeAssistantMQTT:
         elif attribute.value_type == "switch":
             component = "switch"
         
-        # State Topic
-        state_topic = f"{self.topic_prefix}/device/{device.device_id}/state"
+        # State Topic - SEPARATE für jedes Attribut
+        state_topic = f"{self.topic_prefix}/device/{device.device_id}/{attribute_name}"
         
         # Discovery Config
         config = {
@@ -201,8 +201,8 @@ class HomeAssistantMQTT:
             "payload_not_available": "offline"
         }
         
-        # Value Template für das spezifische Attribut
-        config["value_template"] = f"{{{{ value_json.{attribute_name} }}}}"
+        # KEIN Value Template mehr nötig - direkter Wert
+        # config["value_template"] = f"{{{{ value_json.{attribute_name} }}}}"
         
         # Unit of measurement hinzufügen wenn vorhanden
         if attribute.unit and attribute.unit.lower() != "none":
@@ -326,36 +326,28 @@ class HomeAssistantMQTT:
         if check_new_attributes:
             self._check_and_send_discovery_for_new_attributes(device)
         
-        # State aus allen Attributen zusammenstellen
-        state = {}
+        # SEPARATE State Topics für jedes Attribut
         for attr_name, attribute in device.attributes.items():
             value = attribute.value
             # Robuste Decimal/Float Konvertierung für JSON Serialisierung
             value = self._ensure_json_serializable(value)
-            state[attr_name] = value
+            
+            # Separater State Topic für dieses Attribut
+            state_topic = f"{self.topic_prefix}/device/{device.device_id}/{attr_name}"
+            
+            # Direkten Wert (nicht JSON) senden
+            try:
+                if isinstance(value, (str, int, float)):
+                    payload = str(value)
+                else:
+                    payload = json.dumps(value)
+                
+                self.publish(state_topic, payload)
+                
+            except Exception as e:
+                print(f"[MQTT] Fehler beim Senden von {attr_name}: {e}")
         
-        # State Topic
-        state_topic = f"{self.topic_prefix}/device/{device.device_id}/state"
-        
-        # State als JSON veröffentlichen mit Decimal-sicherer Serialisierung
-        try:
-            state_json = json.dumps(state)
-        except TypeError as e:
-            print(f"[MQTT] JSON Serialisierung fehlgeschlagen: {e}")
-            # Fallback: Alle Werte zu Strings konvertieren
-            state_safe = {}
-            for k, v in state.items():
-                try:
-                    state_safe[k] = float(v) if isinstance(v, (int, float)) or hasattr(v, '__float__') else str(v)
-                except:
-                    state_safe[k] = str(v)
-            state_json = json.dumps(state_safe)
-        success = self.publish(state_topic, state_json)
-        
-        if success:
-            print(f"[MQTT] State für {device.name} veröffentlicht: {len(state)} Attribute")
-        
-        return success
+        return True
     
     def _check_and_send_discovery_for_new_attributes(self, device: Device):
         """Prüft ob es neue Attribute gibt und sendet Discovery dafür"""
