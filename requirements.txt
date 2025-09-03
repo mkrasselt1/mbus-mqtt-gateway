@@ -1,4 +1,4 @@
-# flask  # Webserver entfernt für bessere Sicherheit
-paho-mqtt
+# M-Bus Python library
 pyMeterBus
+# Serial communication
 pyserial

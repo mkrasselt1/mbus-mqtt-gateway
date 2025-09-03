@@ -1,7 +1,6 @@
 from multiprocessing import Process
 from app.mbus import MBusClient
 from app.config import Config
-from app.device_manager import device_manager
 import signal
 import sys
 import time
@@ -9,7 +8,6 @@ import time
 # Globale Variablen für sauberes Shutdown
 shutdown_flag = False
 processes = []
-start_time = time.time()  # Für Uptime-Berechnung
 
 def signal_handler(signum, frame):
     """Signal-Handler für sauberes Shutdown bei Strg+C"""
@@ -62,70 +60,36 @@ def start_mbus_scanning():
     finally:
         print("[INFO] M-Bus Service ordnungsgemäß beendet")
 
-def start_gateway_monitoring():
-    """Startet Gateway-Überwachung und regelmäßige Updates"""
-    global shutdown_flag, start_time
-    
-    status_counter = 0
-    
-    try:
-        while not shutdown_flag:
-            # Gateway IP-Adresse aktualisieren
-            device_manager.update_gateway_ip()
-            
-            # Gateway Uptime aktualisieren
-            uptime = int(time.time() - start_time)
-            device_manager.update_gateway_uptime(uptime)
-            
-            # Status nur alle 5 Minuten ausgeben (10 * 30 Sekunden)
-            status_counter += 1
-            if status_counter >= 10:
-                device_manager.print_status()
-                status_counter = 0
-            
-            # 30 Sekunden warten (mit Shutdown-Check)
-            for _ in range(30):
-                if shutdown_flag:
-                    break
-                time.sleep(1)
-                
-    except KeyboardInterrupt:
-        print("[INFO] Gateway-Monitoring beendet durch Benutzer")
-    except Exception as e:
-        print(f"[ERROR] Fehler im Gateway-Monitoring: {e}")
-    finally:
-        print("[INFO] Gateway-Monitoring ordnungsgemäß beendet")
-
 if __name__ == "__main__":
     try:
-        print("[INFO] Starte MBus Scanner mit zentraler Geräteverwaltung...")
+        print("[INFO] Starte MBus Scanner...")
         
-        # Einfachere Lösung: Alles in einem Thread
-        config = Config()
+        # Nur M-Bus Prozess starten
+        mbus_process = Process(target=start_mbus_scanning, name="MBus-Service")
+        processes.append(mbus_process)
         
-        # M-Bus Client initialisieren  
-        mbus_client = MBusClient(
-            port=config.data["mbus_port"],
-            baudrate=config.data["mbus_baudrate"],
-            mqtt_client=None
-        )
+        mbus_process.start()
         
         print("[INFO] M-Bus Scanner gestartet")
-        print("[INFO] Gateway-Monitoring gestartet")
         print("[INFO] Drücken Sie Strg+C für sauberes Herunterfahren")
         
-        # Gateway-Monitoring in separatem Thread
-        import threading
-        gateway_thread = threading.Thread(target=start_gateway_monitoring, name="Gateway-Monitoring", daemon=True)
-        gateway_thread.start()
-        
-        # M-Bus Scanning im Hauptthread
-        scan_interval = config.data.get("mbus_scan_interval_minutes", 60)
-        mbus_client.start(scan_interval_minutes=scan_interval)
+        # Hauptthread wartet auf Prozesse
+        try:
+            while not shutdown_flag:
+                # Prüfe ob Prozess noch lebt
+                if not mbus_process.is_alive():
+                    print(f"[WARN] Prozess {mbus_process.name} ist unerwartet beendet")
+                    break
+                
+                time.sleep(5)  # Alle 5 Sekunden prüfen
+        except KeyboardInterrupt:
+            pass  # Wird vom Signal-Handler behandelt
         
     except KeyboardInterrupt:
-        print("[INFO] Programm beendet durch Benutzer")
+        print("[INFO] Hauptprozess beendet durch Benutzer")
     except Exception as e:
         print(f"[ERROR] Unerwarteter Fehler: {e}")
     finally:
-        print("[INFO] Programm ordnungsgemäß beendet")
+        # Sauberes Shutdown falls nicht durch Signal-Handler ausgelöst
+        if not shutdown_flag:
+            signal_handler(signal.SIGINT, None)

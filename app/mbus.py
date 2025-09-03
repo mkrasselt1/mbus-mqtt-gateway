@@ -3,72 +3,25 @@ import json
 import serial
 import meterbus
 import threading
+from app.device_manager import device_manager
 #from meterbus.telegram_short import TelegramShort
         #from meterbus.defines import CONTROL_MASK_REQ_UD1, CONTROL_MASK_DIR_M2S
         #from meterbus.serial import serial_send
-from app.mqtt import MQTTClient
 
 
 class MBusClient:
-    def __init__(self, port, baudrate=2400, mqtt_client = None):
+    def __init__(self, port, baudrate=2400, mqtt_client=None):
         """
         Initialize the M-Bus client with the given serial port and baudrate.
         :param port: Serial port where the M-Bus master is connected (e.g., '/dev/ttyUSB0').
-        :param mqtt_client: An instance of MQTTClient for publishing data.
         :param baudrate: Baudrate for the M-Bus communication (default: 2400).
         """
         self.port = port
         self.baudrate = baudrate
         self.devices = []  # List of detected M-Bus devices
         self.device_info = {}  # Dict to store device information
-        self.mqtt_client = mqtt_client
+        self.device_manager = device_manager
         print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
-        
-        # Setze Reconnect-Callback für MQTT-Client
-        if self.mqtt_client:
-            self.mqtt_client.set_reconnect_callback(self._on_mqtt_reconnect)
-            # Neue Geräteverwaltung statt Callbacks
-
-    def _update_device_registry(self):
-        """
-        Aktualisiert die zentrale Geräteverwaltung im MQTT-Client mit aktuellen M-Bus Geräten.
-        """
-        if not self.mqtt_client:
-            print("[WARN] MQTT-Client nicht verfügbar für Geräteverwaltung")
-            return
-        
-        print("[INFO] Aktualisiere zentrale Geräteverwaltung...")
-        
-        # Alle M-Bus Geräte zur zentralen Verwaltung hinzufügen
-        for device in self.devices:
-            if device in self.device_info:
-                device_info = self.device_info[device].copy()
-                # Adresse hinzufügen für Discovery
-                device_info['address'] = device
-                self.mqtt_client.add_mbus_device(device, device_info)
-        
-        # Gateway-Informationen aktualisieren
-        if self.device_info:
-            import uuid
-            mac = ':'.join(f'{(uuid.getnode() >> ele) & 0xff:02x}' for ele in range(40, -1, -8)).replace(":", "")
-            connected_devices = [
-                {
-                    'name': info['name'],
-                    'address': info['address'],
-                    'manufacturer': info['manufacturer']
-                }
-                for info in self.device_info.values()
-            ]
-            self.mqtt_client.set_gateway_info(mac, connected_devices)
-
-    def _on_mqtt_reconnect(self):
-        """
-        Wird aufgerufen, wenn MQTT-Verbindung wiederhergestellt wird.
-        Aktualisiert die Geräteverwaltung und triggert Discovery.
-        """
-        print("[INFO] MQTT wiederverbunden - aktualisiere Geräteverwaltung...")
-        self._update_device_registry()
-        # Discovery wird automatisch getriggert wenn HA online ist
 
     def start_periodic_scan(self, interval_minutes):
         """
@@ -99,11 +52,6 @@ class MBusClient:
                             data = self.read_data_from_device(device)
                             if data:
                                 print(f"[INFO] Neues Gerät {device} erfolgreich initialisiert")
-                        
-                        # Discovery für neue Geräte auslösen
-                        if self.mqtt_client:
-                            print("[INFO] Starte Discovery für neue Geräte in 2 Sekunden...")
-                            threading.Timer(2.0, self.mqtt_client.send_all_discovery).start()
                     else:
                         print(f"[INFO] Regelmäßiger M-Bus Scan abgeschlossen - keine neuen Geräte gefunden")
                         
@@ -115,14 +63,12 @@ class MBusClient:
         scan_thread.start()
         print(f"[INFO] Regelmäßiger M-Bus Scan gestartet (alle {interval_minutes} Minuten)")
 
-    def scan_devices(self, is_initial_scan=False):
+    def scan_devices(self):
         """
         Scan for M-Bus devices on the network.
         Thread-safe und vermeidet Dopplungen.
-        
-        :param is_initial_scan: True wenn dies der erste Scan beim Start ist
         """
-        print(f"[INFO] Starte M-Bus Geräte-Scan{'(Initial)' if is_initial_scan else ''}...")
+        print("[INFO] Starte M-Bus Geräte-Scan...")
         initial_device_count = len(self.devices)
         
         try:
@@ -147,15 +93,6 @@ class MBusClient:
             print("[WARN] M-Bus Scan abgeschlossen: Keine Geräte gefunden")
         else:
             print(f"[INFO] M-Bus Scan abgeschlossen: Keine neuen Geräte (Total: {new_device_count})")
-        
-        # Nach dem Scan: Geräteverwaltung aktualisieren
-        self._update_device_registry()
-        
-        # Beim ersten Scan: Scan-Complete-Flag setzen
-        if is_initial_scan:
-            print("[INFO] Erster Scan abgeschlossen - markiere als complete")
-            if self.mqtt_client:
-                self.mqtt_client.set_initial_scan_complete()
 
     def read_data_from_device(self, address):
         """
@@ -209,12 +146,8 @@ class MBusClient:
                     'manufacturer': ydata['manufacturer'],
                     'address': address,
                     'last_seen': time.time(),
-                    'records': recs  # Speichere Records für Discovery
+                    'records': recs  # Speichere Records für Datenverarbeitung
                 }
-                
-                # Publiziere Device-Status
-                if self.mqtt_client:
-                    self.mqtt_client.publish(f"device/{address}/status", "online")
 
                 return ydata
             
@@ -317,74 +250,17 @@ class MBusClient:
         else:
             return f"Messwert {index} ({unit})"
 
-    def publish_homeassistant_discovery(self, address, data):
-        """
-        Publish Home Assistant MQTT auto-discovery configuration for each record of a specific device.
-        :param address: The address of the M-Bus device.
-        :param data: The data structure containing the meter's attributes.
-        """
-        if self.mqtt_client is None:
-            print("MQTT client is not initialized. Cannot publish discovery.")
-            return
-            
-        records = data.get("records", [])
-        for idx, record in enumerate(records):
-            # Verwende den Namen falls vorhanden, sonst generischen Namen
-            sensor_name = record.get("name", f"Record {idx}")
-            key = f"record_{idx}"
-            object_id = f"mbus_meter_{address}_{key}"
-            
-            # Unit of measurement: nur setzen wenn nicht 'none' oder leer
-            unit = record.get("unit", "")
-            
-            payload = {
-                "name": f"{sensor_name} ({address})",
-                "state_topic": f"{self.mqtt_client.topic_prefix}/meter/{address}",
-                "value_template": f"{{{{ value_json.records[{idx}].value }}}}",
-                "availability_topic": f"{self.mqtt_client.topic_prefix}/status",
-                "payload_available": "online",
-                "payload_not_available": "offline",
-                "unique_id": object_id,
-                "device": {
-                    "identifiers": [f"mbus_meter_{address}"],
-                    "name": f"MBus Meter {address}",
-                    "manufacturer": data.get("manufacturer", "Unknown"),
-                    "model": data.get("medium", "Unknown"),
-                    "sw_version": data.get("identification", ""),
-                },
-            }
-            
-            # Unit nur hinzufügen wenn sie nicht 'none' oder leer ist
-            if unit and unit.lower() != "none":
-                payload["unit_of_measurement"] = unit
-            
-            # Setze passende Icons basierend auf dem Sensor-Typ
-            if "spannung" in sensor_name.lower() or "voltage" in sensor_name.lower():
-                payload["icon"] = "mdi:lightning-bolt"
-            elif "strom" in sensor_name.lower() or "current" in sensor_name.lower():
-                payload["icon"] = "mdi:current-ac"
-            elif "leistung" in sensor_name.lower() or "power" in sensor_name.lower():
-                payload["icon"] = "mdi:flash"
-            elif "energie" in sensor_name.lower() or "energy" in sensor_name.lower():
-                payload["icon"] = "mdi:lightning-bolt-circle"
-            elif "frequenz" in sensor_name.lower() or "frequency" in sensor_name.lower():
-                payload["icon"] = "mdi:sine-wave"
-            elif "cos" in sensor_name.lower():
-                payload["icon"] = "mdi:cosine-wave"
-            else:
-                payload["icon"] = "mdi:gauge"
-            
-            self.mqtt_client.publish_discovery("sensor", object_id, payload)
-            print(f"Published Home Assistant discovery for {sensor_name} on device {address}")
-
     def publish_meter_data(self, address, data):
         """
-        Publish M-Bus meter data to MQTT.
+        Verarbeite M-Bus Daten und aktualisiere den DeviceManager.
         :param address: The address of the M-Bus device.
         :param data: The decoded data from the meter.
         """
-        topic = f"meter/{address}"
         if isinstance(data, dict):
+            # Daten an den DeviceManager weiterleiten
+            self.device_manager.update_mbus_device_data(address, data)
+            
+            # Zusätzlich JSON-Output für Debugging
             import decimal
             class DecimalEncoder(json.JSONEncoder):
                 def default(self, o):
@@ -395,11 +271,7 @@ class MBusClient:
                     return super().default(o)
 
             payload = json.dumps(data, cls=DecimalEncoder)
-            if self.mqtt_client is not None:
-                self.mqtt_client.publish(topic, payload)
-                # print(f"Published data for device {address} to MQTT: {payload}")
-            else:
-                print("MQTT client is not initialized. Cannot publish data.")
+            print(f"Meter data for device {address}: {payload}")
         else:
             print(f"Data for device {address} is not in expected format, skipping publish.")
             print(f"Data({type(data)}): {data}")
@@ -412,12 +284,9 @@ class MBusClient:
         :param scan_interval_minutes: Intervall in Minuten für erneutes Scannen nach neuen Geräten (Standard: 60 Min)
         """
         # Initial scan for devices on startup
-        self.scan_devices(is_initial_scan=True)
+        self.scan_devices()
         
         print(f"Detected devices: {self.devices}")
-
-        # Nach erfolgreichem Initial-Scan wird Discovery automatisch getriggert (siehe scan_devices)
-        # Keine manuelle Discovery mehr nötig
 
         # Starte regelmäßiges Scannen im Hintergrund
         self.start_periodic_scan(scan_interval_minutes)
@@ -438,9 +307,10 @@ class MBusClient:
                         
                         self.publish_meter_data(device, data)
                     else:
-                        # Device offline - publiziere offline Status
-                        if self.mqtt_client:
-                            self.mqtt_client.publish(f"device/{device}/status", "offline")
+                        # Device offline - im DeviceManager als offline markieren
+                        device_id = f"mbus_meter_{device}"
+                        self.device_manager.set_device_offline(device_id)
+                        print(f"[WARN] Device {device} ist offline")
                 
                 # Kurze Pause zwischen den Zyklen
                 time.sleep(1)
