@@ -309,13 +309,30 @@ class HomeAssistantMQTT:
         # State aus allen Attributen zusammenstellen
         state = {}
         for attr_name, attribute in device.attributes.items():
-            state[attr_name] = attribute.value
+            value = attribute.value
+            # Decimal zu Float konvertieren für JSON Serialisierung
+            if hasattr(value, '__class__') and 'Decimal' in str(type(value)):
+                value = round(float(value), 4)
+            elif isinstance(value, float):
+                value = round(value, 4)
+            state[attr_name] = value
         
         # State Topic
         state_topic = f"{self.topic_prefix}/device/{device.device_id}/state"
         
-        # State als JSON veröffentlichen
-        state_json = json.dumps(state)
+        # State als JSON veröffentlichen mit Decimal-sicherer Serialisierung
+        try:
+            state_json = json.dumps(state)
+        except TypeError as e:
+            print(f"[MQTT] JSON Serialisierung fehlgeschlagen: {e}")
+            # Fallback: Alle Werte zu Strings konvertieren
+            state_safe = {}
+            for k, v in state.items():
+                try:
+                    state_safe[k] = float(v) if isinstance(v, (int, float)) or hasattr(v, '__float__') else str(v)
+                except:
+                    state_safe[k] = str(v)
+            state_json = json.dumps(state_safe)
         success = self.publish(state_topic, state_json)
         
         if success:

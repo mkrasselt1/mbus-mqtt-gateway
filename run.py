@@ -75,18 +75,26 @@ def start_mbus_scanning():
 
 def start_gateway_monitoring():
     """Startet Gateway-Überwachung und regelmäßige Updates"""
-    global shutdown_flag, start_time
+    global shutdown_flag
     
+    # Lokale Start-Zeit für diesen Thread
+    thread_start_time = time.time()
     status_counter = 0
+    
+    print(f"[INFO] Gateway-Monitoring gestartet um {time.strftime('%H:%M:%S')}")
     
     try:
         while not shutdown_flag:
             # Gateway IP-Adresse aktualisieren
             device_manager.update_gateway_ip()
             
-            # Gateway Uptime aktualisieren
-            uptime = int(time.time() - start_time)
+            # Gateway Uptime aktualisieren (seit Thread-Start)
+            uptime = int(time.time() - thread_start_time)
             device_manager.update_gateway_uptime(uptime)
+            
+            # Debug: Uptime ausgeben
+            if uptime % 60 == 0:  # Jede Minute
+                print(f"[DEBUG] Gateway Uptime: {uptime} Sekunden ({uptime//60} Minuten)")
             
             # Status nur alle 5 Minuten ausgeben (10 * 30 Sekunden)
             status_counter += 1

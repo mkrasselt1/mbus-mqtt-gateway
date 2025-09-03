@@ -1,9 +1,15 @@
 import time
 import json
-import serial
 import meterbus
 import threading
 from app.device_manager import device_manager
+
+# Expliziter Import von pySerial
+try:
+    from serial import Serial, SerialException, serial_for_url
+except ImportError as e:
+    print(f"[ERROR] Kann pySerial nicht importieren: {e}")
+    raise
 #from meterbus.telegram_short import TelegramShort
         #from meterbus.defines import CONTROL_MASK_REQ_UD1, CONTROL_MASK_DIR_M2S
         #from meterbus.serial import serial_send
@@ -72,7 +78,7 @@ class MBusClient:
         initial_device_count = len(self.devices)
         
         try:
-            with serial.serial_for_url(self.port,
+            with serial_for_url(self.port,
                             self.baudrate, 8, 'E', 1, timeout=1) as ser:
 
                 # Ensure we are at the beginning of the records
@@ -80,7 +86,7 @@ class MBusClient:
 
                 self.mbus_scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF", False)
 
-        except serial.SerialException as e:
+        except SerialException as e:
             print(f"[ERROR] Serieller Fehler beim M-Bus Scan: {e}")
             return
 
@@ -102,7 +108,7 @@ class MBusClient:
         """
         try:
             ibt = meterbus.inter_byte_timeout(self.baudrate)
-            with serial.serial_for_url(self.port,
+            with serial_for_url(self.port,
                             self.baudrate, 8, 'E', 1,
                             inter_byte_timeout=ibt,
                             timeout=1) as ser:
@@ -151,7 +157,7 @@ class MBusClient:
 
                 return ydata
             
-        except serial.SerialException as e:
+        except SerialException as e:
             print(e)
         return None
 

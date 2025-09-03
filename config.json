@@ -1,0 +1,9 @@
+{
+    "mqtt_broker": "localhost",
+    "mqtt_port": 1883,
+    "mqtt_topic": "mbus",
+    "mbus_port": "/dev/ttyUSB0",
+    "mbus_baudrate": 9600,
+    "mqtt_username": "",
+    "mqtt_password": ""
+}

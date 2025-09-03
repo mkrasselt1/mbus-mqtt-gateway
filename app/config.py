@@ -9,6 +9,7 @@ class Config:
             "mqtt_port": 1883,
             "mqtt_topic": "mbus",
             "mbus_port": "/dev/ttyUSB0",
+            "mbus_baudrate": 2400,
             "mqtt_username": "",
             "mqtt_password": ""
         }
