@@ -357,6 +357,8 @@ class HomeAssistantMQTT:
         success_count = 0
         total_attributes = len(device.attributes)
         
+        print(f"[MQTT] Sende Discovery für {device.device_id} mit {total_attributes} Attributen")
+        
         for attr_name in device.attributes.keys():
             config = self._generate_discovery_config(device, attr_name)
             if config:
@@ -375,9 +377,15 @@ class HomeAssistantMQTT:
                     with self._lock:
                         self.discovery_sent.add(discovery_key)
                         self.last_discovery_time[discovery_key] = time.time()
+                    
+                    print(f"[MQTT] ✓ Discovery für {attr_name} erfolgreich")
+                else:
+                    print(f"[MQTT] ✗ Discovery für {attr_name} FEHLGESCHLAGEN!")
+                
+                time.sleep(0.1)  # Kurze Pause zwischen Attributen
         
-        print(f"[MQTT] Discovery für {device.name}: {success_count}/{total_attributes} Attribute gesendet")
-        return success_count > 0
+        print(f"[MQTT] Discovery für {device.name}: {success_count}/{total_attributes} Attribute erfolgreich")
+        return success_count == total_attributes  # Alle müssen erfolgreich sein
     
     def _send_all_discovery(self):
         """Sendet Discovery für alle Geräte"""
@@ -388,10 +396,22 @@ class HomeAssistantMQTT:
         print("[MQTT] Sende Discovery für alle Geräte...")
         devices = device_manager.get_all_devices()
         
-        for device_id, device in devices.items():
-            if device.attributes:  # Nur Geräte mit Attributen
+        # Erst alle Gateway-Sensoren senden
+        gateway_devices = [d for d in devices.values() if d.device_type == "gateway"]
+        
+        for gateway_device in gateway_devices:
+            print(f"[MQTT] Sende Discovery für Gateway {gateway_device.device_id}")
+            self._send_device_discovery(gateway_device)
+            time.sleep(0.2)
+        
+        # Dann alle M-Bus Geräte
+        mbus_devices = [d for d in devices.values() if d.device_type == "mbus_meter"]
+        
+        for device in mbus_devices:
+            if device.attributes:  # Nur M-Bus Geräte mit Attributen
+                print(f"[MQTT] Sende Discovery für Gerät {device.device_id}")
                 self._send_device_discovery(device)
-                time.sleep(0.1)  # Kurze Pause zwischen Geräten
+                time.sleep(0.2)  # Längere Pause für Stabilität
     
     def publish_device_state(self, device: Device, check_new_attributes: bool = True):
         """Veröffentlicht den aktuellen Status eines Geräts"""
@@ -483,10 +503,38 @@ class HomeAssistantMQTT:
     
     def force_rediscovery(self):
         """Erzwingt erneute Discovery für alle Geräte"""
+        print("[MQTT] Erzwinge komplette Neu-Discovery...")
+        
+        # Alle alten Discovery Topics löschen
+        self._clear_all_discovery_topics()
+        
+        # Discovery Status zurücksetzen
         self._reset_discovery()
+        
         if self.connected:
-            threading.Timer(1.0, self._send_all_discovery).start()
+            # Kurz warten und dann neue Discovery senden
+            threading.Timer(2.0, self._send_all_discovery).start()
             print("[MQTT] Erneute Discovery eingeleitet")
+    
+    def _clear_all_discovery_topics(self):
+        """Löscht alle alten Discovery Topics"""
+        if not self.connected:
+            return
+            
+        # Bekannte Discovery-Präfixe löschen
+        discovery_patterns = [
+            "homeassistant/sensor/mbus_meter_+/+/config",
+            "homeassistant/binary_sensor/mbus_meter_+/+/config", 
+            "homeassistant/sensor/gateway_+/+/config",
+            "homeassistant/binary_sensor/gateway_+/+/config"
+        ]
+        
+        for pattern in discovery_patterns:
+            # Leere Payload mit retain=True löscht das Topic
+            self.client.publish(pattern.replace('+', '1'), "", retain=True)
+            time.sleep(0.05)
+        
+        print("[MQTT] Alte Discovery Topics gelöscht")
     
     def _start_heartbeat(self):
         """Startet den Heartbeat-Thread für Availability"""
