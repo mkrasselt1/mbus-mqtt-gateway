@@ -2,6 +2,9 @@ import time
 import json
 import meterbus
 import threading
+import traceback
+import psutil
+import os
 from app.device_manager import device_manager
 
 # Expliziter Import von pySerial
@@ -106,16 +109,31 @@ class MBusClient:
         :param address: The secondary address of the M-Bus device.
         :return: Decoded data from the device.
         """
+        start_time = time.time()
         try:
+            print(f"[DEBUG] Starte Datenlesung für Device {address}")
+            
             ibt = meterbus.inter_byte_timeout(self.baudrate)
             with serial_for_url(self.port,
                             self.baudrate, 8, 'E', 1,
                             inter_byte_timeout=ibt,
-                            timeout=1) as ser:
+                            timeout=2) as ser:  # Timeout erhöht auf 2 Sekunden
+                
+                print(f"[DEBUG] Serial Port {self.port} geöffnet für Device {address}")
                 
                 # Erst die Standard-Daten lesen
                 frame = self.read_standard_data(ser, address)
+                elapsed = time.time() - start_time
+                
                 if frame is None:
+                    print(f"[WARN] Keine Standard-Daten von Device {address} nach {elapsed:.2f}s")
+                    return None
+                
+                print(f"[DEBUG] Frame erhalten von Device {address} nach {elapsed:.2f}s")
+                
+                # Prüfe auf leeren Frame
+                if not hasattr(frame, 'body') or not hasattr(frame.body, 'bodyPayload'):
+                    print(f"[WARN] Leerer Frame von Device {address}")
                     return None
                 
                 # Standard-Records sammeln
@@ -357,34 +375,74 @@ class MBusClient:
 
         # Continuously read data from all detected devices
         last_data_read = {}  # Tracking für Datenänderungen
+        last_successful_read = time.time()  # Watchdog Timer
+        consecutive_failures = 0
         
         while True:
             try:
+                cycle_start = time.time()
+                successful_reads = 0
+                
                 for device in self.devices:
                     try:
                         print(f"[DEBUG] Lese Daten von Device {device}...")
+                        device_start = time.time()
+                        
                         data = self.read_data_from_device(device)
+                        device_elapsed = time.time() - device_start
+                        
                         if data:
                             # Nur loggen wenn sich Daten geändert haben
                             current_values = [rec.get('value') for rec in data.get('records', [])]
                             if last_data_read.get(device) != current_values:
-                                print(f"[DEBUG] Neue Daten von Device {device}: {len(data.get('records', []))} Records")
+                                print(f"[DEBUG] Neue Daten von Device {device}: {len(data.get('records', []))} Records (Zeit: {device_elapsed:.2f}s)")
                                 last_data_read[device] = current_values
                             
                             self.publish_meter_data(device, data)
+                            successful_reads += 1
+                            last_successful_read = time.time()
                         else:
                             # Device offline - im DeviceManager als offline markieren
                             device_id = f"mbus_meter_{device}"
                             self.device_manager.set_device_offline(device_id)
-                            print(f"[WARN] Device {device} ist offline oder antwortet nicht")
+                            print(f"[WARN] Device {device} ist offline oder antwortet nicht (Zeit: {device_elapsed:.2f}s)")
                     
                     except Exception as e:
-                        print(f"[ERROR] Fehler beim Lesen von Device {device}: {e}")
+                        device_elapsed = time.time() - device_start if 'device_start' in locals() else 0
+                        print(f"[ERROR] Fehler beim Lesen von Device {device}: {e} (Zeit: {device_elapsed:.2f}s)")
                         print(f"[ERROR] Device Exception Type: {type(e).__name__}")
                         # Device als offline markieren und weitermachen
                         device_id = f"mbus_meter_{device}"
                         self.device_manager.set_device_offline(device_id)
                         continue  # Nächstes Gerät versuchen
+                
+                # Watchdog Check
+                time_since_success = time.time() - last_successful_read
+                if successful_reads == 0:
+                    consecutive_failures += 1
+                    print(f"[WARN] Kein erfolgreicher Read in diesem Zyklus. Consecutive failures: {consecutive_failures}")
+                    print(f"[WARN] Zeit seit letztem erfolgreichen Read: {time_since_success:.1f}s")
+                    
+                    if consecutive_failures >= 10:  # 10 Zyklen = 150 Sekunden
+                        print(f"[ERROR] Zu viele aufeinanderfolgende Fehler! Führe Neuinitialisierung durch...")
+                        # Hier könnten wir Serial Port neu öffnen oder andere Recovery-Maßnahmen
+                        consecutive_failures = 0
+                        time.sleep(60)  # Längere Pause für Recovery
+                else:
+                    consecutive_failures = 0
+                
+                cycle_elapsed = time.time() - cycle_start
+                print(f"[DEBUG] Zyklus abgeschlossen: {successful_reads}/{len(self.devices)} erfolgreich (Zeit: {cycle_elapsed:.2f}s)")
+                
+                # Memory Check
+                try:
+                    import psutil
+                    process = psutil.Process(os.getpid())
+                    memory_mb = process.memory_info().rss / 1024 / 1024
+                    if memory_mb > 100:  # Warnung bei > 100MB
+                        print(f"[WARN] Hoher Speicherverbrauch: {memory_mb:.1f} MB")
+                except ImportError:
+                    pass  # psutil nicht verfügbar
                 
                 # Kurze Pause zwischen den Zyklen (15 Sekunden für responsive Updates)
                 time.sleep(15)
