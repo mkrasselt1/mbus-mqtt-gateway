@@ -377,11 +377,23 @@ class MBusClient:
         last_data_read = {}  # Tracking für Datenänderungen
         last_successful_read = time.time()  # Watchdog Timer
         consecutive_failures = 0
+        heartbeat_file = "/tmp/mbus_heartbeat.txt"
+        
+        def write_heartbeat():
+            """Schreibt Heartbeat für Health Monitor"""
+            try:
+                with open(heartbeat_file, "w") as f:
+                    f.write(f"{time.time()}\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            except:
+                pass  # Heartbeat ist optional
         
         while True:
             try:
                 cycle_start = time.time()
                 successful_reads = 0
+                
+                # Heartbeat schreiben (zeigt dass Service läuft)
+                write_heartbeat()
                 
                 for device in self.devices:
                     try:

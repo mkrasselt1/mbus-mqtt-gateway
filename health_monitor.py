@@ -117,21 +117,41 @@ class HealthMonitor:
     
     def restart_service(self):
         """Startet den Service neu"""
-        print(f"[ACTION] Starte {self.service_name} neu...")
+        self.restart_count += 1
+        self.last_restart_time = time.time()
+        
+        print(f"[ACTION] Starte {self.service_name} neu... (Versuch #{self.restart_count})")
+        
         try:
-            # Service stoppen
-            subprocess.run(["systemctl", "stop", self.service_name], timeout=30)
-            time.sleep(5)
+            # 1. Versuche normales Stoppen
+            print("[ACTION] Versuche normales Stoppen...")
+            result = subprocess.run(["systemctl", "stop", self.service_name], timeout=15)
+            time.sleep(3)
             
-            # Service starten
+            # 2. Prüfe ob wirklich gestoppt
+            if self.check_service_status():
+                print("[WARN] Service läuft noch - verwende SIGKILL...")
+                self.force_kill_service()
+            
+            # 3. Service starten
+            print("[ACTION] Starte Service...")
             result = subprocess.run(["systemctl", "start", self.service_name], timeout=30)
             
             if result.returncode == 0:
                 print(f"[SUCCESS] {self.service_name} erfolgreich neu gestartet")
                 self.last_activity_time = time.time()
-                return True
+                
+                # Warte bis Service wirklich läuft
+                for i in range(10):
+                    if self.check_service_status():
+                        print(f"[SUCCESS] Service ist nach {i+1}s aktiv")
+                        return True
+                    time.sleep(1)
+                    
+                print("[WARN] Service gestartet aber nicht aktiv")
+                return False
             else:
-                print(f"[ERROR] Fehler beim Starten des Services")
+                print(f"[ERROR] Fehler beim Starten des Services (Code: {result.returncode})")
                 return False
                 
         except Exception as e:
