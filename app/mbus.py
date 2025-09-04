@@ -3,7 +3,6 @@ import json
 import meterbus
 import threading
 import traceback
-import psutil
 import os
 from app.device_manager import device_manager
 
@@ -446,15 +445,15 @@ class MBusClient:
                 cycle_elapsed = time.time() - cycle_start
                 print(f"[DEBUG] Zyklus abgeschlossen: {successful_reads}/{len(self.devices)} erfolgreich (Zeit: {cycle_elapsed:.2f}s)")
                 
-                # Memory Check
+                # Memory Check (optional - nur wenn psutil verfügbar)
                 try:
                     import psutil
                     process = psutil.Process(os.getpid())
                     memory_mb = process.memory_info().rss / 1024 / 1024
                     if memory_mb > 100:  # Warnung bei > 100MB
                         print(f"[WARN] Hoher Speicherverbrauch: {memory_mb:.1f} MB")
-                except ImportError:
-                    pass  # psutil nicht verfügbar
+                except (ImportError, Exception):
+                    pass  # psutil nicht verfügbar oder anderer Fehler
                 
                 # Kurze Pause zwischen den Zyklen (15 Sekunden für responsive Updates)
                 time.sleep(15)
