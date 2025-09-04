@@ -356,18 +356,19 @@ class MBusClient:
         self.start_periodic_scan(scan_interval_minutes)
 
         # Continuously read data from all detected devices
-        try:
-            last_data_read = {}  # Tracking für Datenänderungen
-            
-            while True:
+        last_data_read = {}  # Tracking für Datenänderungen
+        
+        while True:
+            try:
                 for device in self.devices:
                     try:
+                        print(f"[DEBUG] Lese Daten von Device {device}...")
                         data = self.read_data_from_device(device)
                         if data:
                             # Nur loggen wenn sich Daten geändert haben
                             current_values = [rec.get('value') for rec in data.get('records', [])]
                             if last_data_read.get(device) != current_values:
-                                # print(f"Received {len(data.get('records', []))} records from device {device}")
+                                print(f"[DEBUG] Neue Daten von Device {device}: {len(data.get('records', []))} Records")
                                 last_data_read[device] = current_values
                             
                             self.publish_meter_data(device, data)
@@ -375,26 +376,31 @@ class MBusClient:
                             # Device offline - im DeviceManager als offline markieren
                             device_id = f"mbus_meter_{device}"
                             self.device_manager.set_device_offline(device_id)
-                            print(f"[WARN] Device {device} ist offline")
+                            print(f"[WARN] Device {device} ist offline oder antwortet nicht")
                     
                     except Exception as e:
                         print(f"[ERROR] Fehler beim Lesen von Device {device}: {e}")
+                        print(f"[ERROR] Device Exception Type: {type(e).__name__}")
                         # Device als offline markieren und weitermachen
                         device_id = f"mbus_meter_{device}"
                         self.device_manager.set_device_offline(device_id)
                         continue  # Nächstes Gerät versuchen
                 
-                # Kurze Pause zwischen den Zyklen
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("[INFO] M-Bus Datenlesung beendet durch Benutzer")
-        except Exception as e:
-            print(f"[ERROR] Fehler beim Lesen der M-Bus Daten: {e}")
-            # System NICHT beenden - weiter versuchen
-            print("[INFO] M-Bus Service versucht weiter zu laufen...")
-        finally:
-            print("[INFO] M-Bus Service wird beendet...")
-            #time.sleep(10)  # Wait 10 seconds before reading again
+                # Kurze Pause zwischen den Zyklen (15 Sekunden für responsive Updates)
+                time.sleep(15)
+                
+            except KeyboardInterrupt:
+                print("[INFO] M-Bus Datenlesung beendet durch Benutzer")
+                break
+            except Exception as e:
+                print(f"[ERROR] Schwerwiegender Fehler im M-Bus Loop: {e}")
+                print(f"[ERROR] Exception Type: {type(e).__name__}")
+                print(f"[ERROR] Exception Args: {e.args}")
+                import traceback
+                print(f"[ERROR] Traceback: {traceback.format_exc()}")
+                print("[INFO] Warte 30 Sekunden und versuche erneut...")
+                time.sleep(30)
+                # Loop NICHT beenden - weiter versuchen!
 
     
     def ping_address(self, ser, address, retries=5, read_echo=False):
