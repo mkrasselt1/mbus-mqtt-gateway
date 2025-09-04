@@ -187,7 +187,11 @@ class MBusClient:
                 return ydata
             
         except SerialException as e:
-            print(e)
+            print(f"[ERROR] Serieller Fehler bei Gerät {address}: {e}")
+        except meterbus.MBusFrameDecodeError as e:
+            print(f"[ERROR] M-Bus Frame Decode Fehler bei Gerät {address}: {e}")
+        except Exception as e:
+            print(f"[ERROR] Unerwarteter Fehler beim Lesen von Gerät {address}: {e}")
         return None
 
     def read_standard_data(self, ser, address):
@@ -196,27 +200,52 @@ class MBusClient:
         """
         frame = None
         
-        if meterbus.is_primary_address(address):
-            if self.ping_address(ser, address, 2, read_echo=False):
-                self.send_request_frame_ud1(ser, address, read_echo=False)
-                frame = meterbus.load(
-                    meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
-            else:
-                print("no reply")
+        try:
+            if meterbus.is_primary_address(address):
+                if self.ping_address(ser, address, 2, read_echo=False):
+                    self.send_request_frame_ud1(ser, address, read_echo=False)
+                    frame_data = meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH)
+                    if frame_data:
+                        frame = meterbus.load(frame_data)
+                    else:
+                        print(f"[WARN] Leerer Frame von Gerät {address}")
+                        return None
+                else:
+                    print(f"[WARN] Kein Ping-Reply von Gerät {address}")
+                    return None
 
-        elif meterbus.is_secondary_address(address):
-            meterbus.send_select_frame(ser, address, False)
-            try:
-                frame = meterbus.load(meterbus.recv_frame(ser, 1))
-            except meterbus.MBusFrameDecodeError as e:
-                frame = e.value
+            elif meterbus.is_secondary_address(address):
+                meterbus.send_select_frame(ser, address, False)
+                try:
+                    frame_data = meterbus.recv_frame(ser, 1)
+                    if frame_data:
+                        frame = meterbus.load(frame_data)
+                    else:
+                        print(f"[WARN] Leerer Select-Frame von Gerät {address}")
+                        return None
+                except meterbus.MBusFrameDecodeError as e:
+                    frame = e.value
 
-            # Ensure that the select frame request was handled by the slave
-            assert isinstance(frame, meterbus.TelegramACK)
+                # Ensure that the select frame request was handled by the slave
+                if not isinstance(frame, meterbus.TelegramACK):
+                    print(f"[WARN] Ungültiger ACK von Gerät {address}")
+                    return None
 
-            meterbus.send_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER, read_echo=False)
-            time.sleep(0.3)
-            frame = meterbus.load(meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH))
+                meterbus.send_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER, read_echo=False)
+                time.sleep(0.3)
+                frame_data = meterbus.recv_frame(ser, meterbus.FRAME_DATA_LENGTH)
+                if frame_data:
+                    frame = meterbus.load(frame_data)
+                else:
+                    print(f"[WARN] Leerer Data-Frame von Gerät {address}")
+                    return None
+            
+        except meterbus.MBusFrameDecodeError as e:
+            print(f"[ERROR] Frame Decode Fehler bei Gerät {address}: {e}")
+            return None
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Lesen von Gerät {address}: {e}")
+            return None
         
         return frame
 
@@ -332,20 +361,28 @@ class MBusClient:
             
             while True:
                 for device in self.devices:
-                    data = self.read_data_from_device(device)
-                    if data:
-                        # Nur loggen wenn sich Daten geändert haben
-                        current_values = [rec.get('value') for rec in data.get('records', [])]
-                        if last_data_read.get(device) != current_values:
-                            # print(f"Received {len(data.get('records', []))} records from device {device}")
-                            last_data_read[device] = current_values
-                        
-                        self.publish_meter_data(device, data)
-                    else:
-                        # Device offline - im DeviceManager als offline markieren
+                    try:
+                        data = self.read_data_from_device(device)
+                        if data:
+                            # Nur loggen wenn sich Daten geändert haben
+                            current_values = [rec.get('value') for rec in data.get('records', [])]
+                            if last_data_read.get(device) != current_values:
+                                # print(f"Received {len(data.get('records', []))} records from device {device}")
+                                last_data_read[device] = current_values
+                            
+                            self.publish_meter_data(device, data)
+                        else:
+                            # Device offline - im DeviceManager als offline markieren
+                            device_id = f"mbus_meter_{device}"
+                            self.device_manager.set_device_offline(device_id)
+                            print(f"[WARN] Device {device} ist offline")
+                    
+                    except Exception as e:
+                        print(f"[ERROR] Fehler beim Lesen von Device {device}: {e}")
+                        # Device als offline markieren und weitermachen
                         device_id = f"mbus_meter_{device}"
                         self.device_manager.set_device_offline(device_id)
-                        print(f"[WARN] Device {device} ist offline")
+                        continue  # Nächstes Gerät versuchen
                 
                 # Kurze Pause zwischen den Zyklen
                 time.sleep(1)
@@ -353,7 +390,8 @@ class MBusClient:
             print("[INFO] M-Bus Datenlesung beendet durch Benutzer")
         except Exception as e:
             print(f"[ERROR] Fehler beim Lesen der M-Bus Daten: {e}")
-            raise
+            # System NICHT beenden - weiter versuchen
+            print("[INFO] M-Bus Service versucht weiter zu laufen...")
         finally:
             print("[INFO] M-Bus Service wird beendet...")
             #time.sleep(10)  # Wait 10 seconds before reading again

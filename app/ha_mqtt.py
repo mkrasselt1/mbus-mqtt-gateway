@@ -29,6 +29,8 @@ class HomeAssistantMQTT:
         
         # Threading
         self._lock = threading.Lock()
+        self._heartbeat_thread = None
+        self._heartbeat_running = False
         
         # Home Assistant Status überwachen
         self.client.message_callback_add("homeassistant/status", self._on_ha_status)
@@ -51,6 +53,8 @@ class HomeAssistantMQTT:
             # Kurz warten auf Verbindung
             for _ in range(50):  # 5 Sekunden warten
                 if self.connected:
+                    # Heartbeat für Availability starten
+                    self._start_heartbeat()
                     return True
                 time.sleep(0.1)
             
@@ -64,6 +68,9 @@ class HomeAssistantMQTT:
     def disconnect(self):
         """Verbindung trennen"""
         if self.client:
+            # Heartbeat stoppen
+            self._stop_heartbeat()
+            
             # Offline Status senden
             self.publish(f"{self.topic_prefix}/bridge/state", "offline", retain=True)
             self.client.loop_stop()
@@ -254,9 +261,20 @@ class HomeAssistantMQTT:
             "unique_id": object_id,
             "state_topic": state_topic,
             "device": device_info,
-            "availability_topic": f"{self.topic_prefix}/bridge/state",
-            "payload_available": "online",
-            "payload_not_available": "offline"
+            "availability": [
+                {
+                    "topic": f"{self.topic_prefix}/bridge/state",
+                    "payload_available": "online",
+                    "payload_not_available": "offline"
+                },
+                {
+                    "topic": state_topic,
+                    "payload_available": ".*",  # Jeder Wert = verfügbar
+                    "value_template": "{{ 'online' if value != '' else 'offline' }}"
+                }
+            ],
+            "availability_mode": "all",  # Sowohl Bridge als auch State müssen aktuell sein
+            "expire_after": 180  # 3 Minuten ohne Update = offline
         }
         
         # KEIN Value Template mehr nötig - direkter Wert
@@ -396,14 +414,15 @@ class HomeAssistantMQTT:
             # Separater State Topic für dieses Attribut
             state_topic = f"{self.topic_prefix}/device/{device.device_id}/{safe_attr_name}"
             
-            # Direkten Wert (nicht JSON) senden
+            # Direkten Wert (nicht JSON) senden mit RETAIN
             try:
                 if isinstance(value, (str, int, float)):
                     payload = str(value)
                 else:
                     payload = json.dumps(value)
                 
-                self.publish(state_topic, payload)
+                # State Topics MÜSSEN retained werden für Home Assistant
+                self.publish(state_topic, payload, retain=True)
                 
             except Exception as e:
                 print(f"[MQTT] Fehler beim Senden von {attr_name}: {e}")
@@ -468,3 +487,34 @@ class HomeAssistantMQTT:
         if self.connected:
             threading.Timer(1.0, self._send_all_discovery).start()
             print("[MQTT] Erneute Discovery eingeleitet")
+    
+    def _start_heartbeat(self):
+        """Startet den Heartbeat-Thread für Availability"""
+        if not self._heartbeat_running:
+            self._heartbeat_running = True
+            self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+            self._heartbeat_thread.start()
+            print("[MQTT] Heartbeat für Availability gestartet")
+    
+    def _stop_heartbeat(self):
+        """Stoppt den Heartbeat-Thread"""
+        self._heartbeat_running = False
+        if self._heartbeat_thread:
+            self._heartbeat_thread.join(timeout=2)
+            self._heartbeat_thread = None
+            print("[MQTT] Heartbeat gestoppt")
+    
+    def _heartbeat_loop(self):
+        """Heartbeat-Schleife für regelmäßige State-Updates"""
+        while self._heartbeat_running:
+            try:
+                if self.connected and self.ha_online:
+                    # Alle 90 Sekunden alle Gerätezustände erneuern
+                    # Das liegt unter dem expire_after von 180s
+                    self.publish_all_device_states()
+                    
+                time.sleep(90)  # 90 Sekunden Intervall
+                
+            except Exception as e:
+                print(f"[MQTT] Fehler im Heartbeat: {e}")
+                time.sleep(30)  # Bei Fehler kürzere Pause

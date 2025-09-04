@@ -248,6 +248,13 @@ class DeviceManager:
         # Status auch aktualisieren
         self.update_device_attribute(self.gateway_id, "status", "online", "", "binary_sensor")
         
+        # Bridge State Heartbeat - sicherstellen dass Bridge online bleibt
+        if self.mqtt_client and uptime_seconds % 30 == 0:  # Alle 30 Sekunden
+            try:
+                self.mqtt_client.publish("mbus/bridge/state", "online", retain=True)
+            except Exception as e:
+                print(f"[WARN] Bridge Heartbeat fehlgeschlagen: {e}")
+        
         # MQTT State Update für Gateway senden (alle 60 Sekunden für Lebenszeichen)
         if self.mqtt_client and uptime_seconds % 60 == 0 and self.gateway_id in self.devices:
             device = self.devices[self.gateway_id]
