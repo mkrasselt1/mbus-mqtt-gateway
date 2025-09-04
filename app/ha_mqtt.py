@@ -273,7 +273,7 @@ class HomeAssistantMQTT:
                     "value_template": "{{ 'online' if value != '' else 'offline' }}"
                 }
             ],
-            "availability_mode": "all",  # Sowohl Bridge als auch State müssen aktuell sein
+            "availability_mode": "any",  # EINER der beiden Topics reicht
             "expire_after": 180  # 3 Minuten ohne Update = offline
         }
         
