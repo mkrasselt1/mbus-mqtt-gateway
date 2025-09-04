@@ -22,7 +22,7 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Pfade definieren
-INSTALL_DIR="/home/pi/mbus-mqtt-gateway"
+INSTALL_DIR="/opt/mbus-mqtt-gateway"
 SERVICE_FILE="/etc/systemd/system/mbus-health-monitor.service"
 MAIN_SERVICE="mbus-mqtt-gateway.service"
 
@@ -53,8 +53,8 @@ Wants=mbus-mqtt-gateway.service
 Type=simple
 User=pi
 Group=pi
-WorkingDirectory=/home/pi/mbus-mqtt-gateway
-ExecStart=/home/pi/mbus-mqtt-gateway/.venv/bin/python health_monitor.py
+WorkingDirectory=/opt/mbus-mqtt-gateway
+ExecStart=/opt/mbus-mqtt-gateway/.venv/bin/python health_monitor.py
 Restart=always
 RestartSec=30
 StandardOutput=journal
