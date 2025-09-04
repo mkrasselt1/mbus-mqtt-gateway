@@ -80,13 +80,20 @@ class HealthMonitor:
     
     def check_for_activity(self):
         """Prüft ob der Service noch aktiv Daten verarbeitet"""
-        logs = self.get_recent_logs(5)  # Letzte 5 Minuten
+        
+        # 1. Heartbeat File prüfen (zuverlässiger)
+        if self.check_heartbeat_file():
+            return True
+        
+        # 2. Fallback: Log-basierte Prüfung
+        logs = self.get_recent_logs(3)  # Letzte 3 Minuten
         
         # Suche nach Aktivitäts-Indikatoren
         activity_indicators = [
             "[DEBUG] Neue Daten von Device",
             "[DEBUG] Lese Daten von Device", 
             "[INFO] M-Bus Gerät",
+            "[DEBUG] Zyklus abgeschlossen",
             "Records"
         ]
         
@@ -96,6 +103,17 @@ class HealthMonitor:
                 return True
         
         return False
+    
+    def force_kill_service(self):
+        """Forciert das Beenden eines hängenden Services"""
+        try:
+            print("[ACTION] Versuche Service mit SIGKILL zu beenden...")
+            subprocess.run(["systemctl", "kill", "-s", "SIGKILL", self.service_name], timeout=10)
+            time.sleep(5)
+            return True
+        except Exception as e:
+            print(f"[ERROR] Fehler beim Force-Kill: {e}")
+            return False
     
     def restart_service(self):
         """Startet den Service neu"""
