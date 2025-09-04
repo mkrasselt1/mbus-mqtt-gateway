@@ -1,8 +1,8 @@
 #!/bin/bash
-"""
-Setup Script für MBus Gateway Health Monitor
-Installiert und konfiguriert automatisches Monitoring
-"""
+#
+# Setup Script für MBus Gateway Health Monitor
+# Installiert und konfiguriert automatisches Monitoring
+#
 
 set -e  # Exit bei Fehlern
 
@@ -26,6 +26,14 @@ INSTALL_DIR="/opt/mbus-mqtt-gateway"
 SERVICE_FILE="/etc/systemd/system/mbus-health-monitor.service"
 MAIN_SERVICE="mbus-mqtt-gateway.service"
 
+# Aktuellen User ermitteln (für den Service)
+ACTUAL_USER=$(who am i | awk '{print $1}')
+if [ -z "$ACTUAL_USER" ]; then
+    ACTUAL_USER="root"  # Fallback
+fi
+
+echo -e "${YELLOW}Service wird als User '$ACTUAL_USER' ausgeführt${NC}"
+
 echo -e "${YELLOW}Prüfe Installationsverzeichnis...${NC}"
 if [ ! -d "$INSTALL_DIR" ]; then
     echo -e "${RED}Fehler: $INSTALL_DIR nicht gefunden!${NC}"
@@ -43,7 +51,7 @@ cp "$INSTALL_DIR/health_monitor.py" "$INSTALL_DIR/health_monitor.py" 2>/dev/null
 chmod +x "$INSTALL_DIR/health_monitor.py"
 
 echo -e "${YELLOW}Erstelle systemd Service...${NC}"
-cat > "$SERVICE_FILE" << 'EOF'
+cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=MBus Gateway Health Monitor
 After=mbus-mqtt-gateway.service
@@ -51,10 +59,9 @@ Wants=mbus-mqtt-gateway.service
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/opt/mbus-mqtt-gateway
-ExecStart=/opt/mbus-mqtt-gateway/.venv/bin/python health_monitor.py
+User=root
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/.venv/bin/python health_monitor.py
 Restart=always
 RestartSec=30
 StandardOutput=journal
