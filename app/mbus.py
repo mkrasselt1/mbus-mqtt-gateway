@@ -29,7 +29,14 @@ class MBusClient:
         self.devices = []  # List of detected M-Bus devices
         self.device_info = {}  # Dict to store device information
         self.device_manager = device_manager
+        
+        # Serial Port Recovery System
+        self.serial_recovery_count = 0
+        self.max_recovery_attempts = 3
+        self.restart_requested = False  # Signal für kompletten Thread Neustart
+        
         print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
+        print(f"Serial Recovery System aktiviert (Max: {self.max_recovery_attempts} Versuche)")
 
     def start_periodic_scan(self, interval_minutes):
         """
@@ -385,6 +392,54 @@ class MBusClient:
                     f.write(f"{time.time()}\n{time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             except:
                 pass  # Heartbeat ist optional
+    
+    def _recover_serial_port(self):
+        """Intelligenter Serial Port Recovery - ohne Service Neustart"""
+        try:
+            self.serial_recovery_count += 1
+            print(f"[RECOVERY] Serial Port Recovery #{self.serial_recovery_count}/{self.max_recovery_attempts}")
+            
+            # 1. Alle offenen Verbindungen schließen
+            print(f"[RECOVERY] Schließe alle M-Bus Verbindungen...")
+            
+            # 2. Kurze Pause für Port Release
+            print(f"[RECOVERY] Warte 5 Sekunden für Port Release...")
+            time.sleep(5)
+            
+            # 3. Versuche Port Test
+            try:
+                import serial
+                print(f"[RECOVERY] Teste Serial Port {self.port}...")
+                test_serial = serial.Serial(self.port, self.baudrate, timeout=1)
+                test_serial.close()
+                print(f"[RECOVERY] ✅ Serial Port Test erfolgreich")
+                
+                # Reset Recovery Counter bei Erfolg
+                print(f"[RECOVERY] Serial Port Recovery erfolgreich - Counter zurückgesetzt")
+                return True
+                
+            except Exception as e:
+                print(f"[RECOVERY] ❌ Serial Port Test fehlgeschlagen: {e}")
+                
+                if self.serial_recovery_count >= self.max_recovery_attempts:
+                    print(f"[CRITICAL] Max Recovery Versuche erreicht - Thread Neustart erforderlich!")
+                    self.restart_requested = True
+                    return False
+                
+                # Längere Pause für nächsten Versuch
+                print(f"[RECOVERY] Warte 15 Sekunden für nächsten Versuch...")
+                time.sleep(15)
+                return False
+                
+        except Exception as e:
+            print(f"[ERROR] Serial Port Recovery Fehler: {e}")
+            return False
+
+    def _reset_recovery_counter(self):
+        """Setzt Recovery Counter zurück bei erfolgreichem Betrieb"""
+        if self.serial_recovery_count > 0:
+            print(f"[RECOVERY] Reset Counter: {self.serial_recovery_count} -> 0")
+            self.serial_recovery_count = 0
         
         while True:
             try:
@@ -411,6 +466,8 @@ class MBusClient:
                             
                             self.publish_meter_data(device, data)
                             successful_reads += 1
+                            # Bei erfolgreicher Datenlesung: Recovery Counter zurücksetzen
+                            self._reset_recovery_counter()
                             last_successful_read = time.time()
                         else:
                             # Device offline - im DeviceManager als offline markieren
@@ -434,11 +491,23 @@ class MBusClient:
                     print(f"[WARN] Kein erfolgreicher Read in diesem Zyklus. Consecutive failures: {consecutive_failures}")
                     print(f"[WARN] Zeit seit letztem erfolgreichen Read: {time_since_success:.1f}s")
                     
-                    if consecutive_failures >= 10:  # 10 Zyklen = 150 Sekunden
-                        print(f"[ERROR] Zu viele aufeinanderfolgende Fehler! Führe Neuinitialisierung durch...")
-                        # Hier könnten wir Serial Port neu öffnen oder andere Recovery-Maßnahmen
-                        consecutive_failures = 0
-                        time.sleep(60)  # Längere Pause für Recovery
+                    if consecutive_failures >= 3:  # Nach 3 Fehlern (45 Sekunden)
+                        print(f"[WARNING] Serial Port Probleme erkannt - starte Recovery...")
+                        
+                        # Versuche Serial Port Recovery
+                        recovery_success = self._recover_serial_port()
+                        
+                        if self.restart_requested:
+                            print(f"[CRITICAL] Thread Neustart erforderlich - beende Reading Loop...")
+                            break  # Verlasse Reading Loop für kompletten Neustart
+                        
+                        if recovery_success:
+                            print(f"[SUCCESS] Serial Port Recovery erfolgreich")
+                            consecutive_failures = 0  # Reset bei Erfolg
+                        else:
+                            consecutive_failures = 0  # Reset für nächsten Versuch
+                        
+                        time.sleep(30)  # Pause nach Recovery
                 else:
                     consecutive_failures = 0
                 

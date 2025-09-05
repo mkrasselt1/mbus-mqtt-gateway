@@ -115,6 +115,32 @@ class HealthMonitor:
             print(f"[ERROR] Fehler beim Force-Kill: {e}")
             return False
     
+    def check_restart_flag(self):
+        """Prüft ob Service Restart angefordert wurde"""
+        restart_flag = "/tmp/mbus_restart_required.flag"
+        
+        if os.path.exists(restart_flag):
+            try:
+                with open(restart_flag, 'r') as f:
+                    reason = f.read().strip()
+                
+                print(f"[RESTART] Service Restart angefordert: {reason}")
+                
+                # Flag löschen
+                os.remove(restart_flag)
+                
+                # Service Restart
+                return self.restart_service()
+                
+            except Exception as e:
+                print(f"[ERROR] Restart Flag Verarbeitung fehlgeschlagen: {e}")
+                try:
+                    os.remove(restart_flag)  # Flag trotzdem löschen
+                except:
+                    pass
+        
+        return False
+
     def restart_service(self):
         """Startet den Service neu"""
         self.restart_count += 1
@@ -183,7 +209,12 @@ class HealthMonitor:
         
         while True:
             try:
-                # Service-Status prüfen
+                # 1. PRIORITY: Prüfe Restart Flag (Serial Port Probleme)
+                if self.check_restart_flag():
+                    time.sleep(30)  # Kurz warten nach Restart
+                    continue
+                
+                # 2. Service-Status prüfen
                 service_active = self.check_service_status()
                 
                 if not service_active:

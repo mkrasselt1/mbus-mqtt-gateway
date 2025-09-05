@@ -158,9 +158,40 @@ if __name__ == "__main__":
         gateway_thread = threading.Thread(target=start_gateway_monitoring, name="Gateway-Monitoring", daemon=True)
         gateway_thread.start()
         
-        # M-Bus Scanning im Hauptthread
+        # M-Bus Scanning mit Auto-Restart bei Serial Problemen
         scan_interval = config.data.get("mbus_scan_interval_minutes", 60)
-        mbus_client.start(scan_interval_minutes=scan_interval)
+        
+        while not shutdown_flag:
+            try:
+                print("[INFO] Starte M-Bus Reading Loop...")
+                mbus_client.restart_requested = False  # Reset Flag
+                
+                # M-Bus Loop starten
+                mbus_client.start(scan_interval_minutes=scan_interval)
+                
+                # Wenn wir hier ankommen, ist der Loop beendet
+                if mbus_client.restart_requested and not shutdown_flag:
+                    print("[WARNING] M-Bus Thread Neustart angefordert - Serial Port Recovery...")
+                    print("[INFO] Warte 10 Sekunden vor Neustart...")
+                    time.sleep(10)
+                    
+                    # Neuen MBusClient erstellen (fresh start)
+                    print("[INFO] Erstelle neue M-Bus Client Instanz...")
+                    mbus_client = MBusClient(
+                        port=config.data["mbus_port"],
+                        baudrate=config.data["mbus_baudrate"],
+                        mqtt_client=None
+                    )
+                    continue
+                else:
+                    # Normales Ende oder Shutdown
+                    break
+                    
+            except Exception as e:
+                print(f"[ERROR] Fehler im M-Bus Thread: {e}")
+                if not shutdown_flag:
+                    print("[INFO] Neustart in 30 Sekunden...")
+                    time.sleep(30)
         
     except KeyboardInterrupt:
         print("[INFO] Programm beendet durch Benutzer")
