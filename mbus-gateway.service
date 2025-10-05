@@ -11,7 +11,8 @@ Group=mbus
 WorkingDirectory=/opt/mbus-gateway
 
 # Main process
-ExecStart=/usr/bin/python3 -m src.main /etc/mbus-gateway/config.yaml
+# Use venv if available, otherwise system python
+ExecStart=/bin/bash -c 'if [ -f /opt/mbus-gateway/venv/bin/python3 ]; then /opt/mbus-gateway/venv/bin/python3 -m src.main /etc/mbus-gateway/config.yaml; else /usr/bin/python3 -m src.main /etc/mbus-gateway/config.yaml; fi'
 
 # Automatic restart on failure
 Restart=always

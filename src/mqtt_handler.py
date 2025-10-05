@@ -175,7 +175,7 @@ class MQTTHandler:
             self.connected = True
             logger.info("mqtt_broker_connected")
             
-            # Publish bridge online status
+            # Publish bridge online status IMMEDIATELY with retain
             self.client.publish(
                 self.ha_config.bridge_state_topic,
                 "online",
