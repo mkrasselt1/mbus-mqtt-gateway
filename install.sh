@@ -45,7 +45,17 @@ echo "  ✓ Directories created"
 
 echo ""
 echo "[3/8] Installing Python dependencies..."
-pip3 install -r requirements-new.txt --upgrade
+
+# Check if we should use system packages or pip
+if [ -f "install_deps.sh" ]; then
+    echo "  Using install_deps.sh for dependency installation..."
+    chmod +x install_deps.sh
+    ./install_deps.sh
+else
+    # Fallback: Try pip with break-system-packages
+    echo "  Installing via pip (with --break-system-packages)..."
+    pip3 install -r requirements-new.txt --upgrade --break-system-packages
+fi
 
 echo "  ✓ Dependencies installed"
 
