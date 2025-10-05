@@ -1,0 +1,120 @@
+# M-Bus MQTT Gateway Configuration
+# Production-Ready Settings
+
+# MQTT Broker Configuration
+mqtt:
+  broker: "localhost"
+  port: 1883
+  username: ""
+  password: ""
+  # Client ID (auto-generated if empty)
+  client_id: ""
+  # Topic Prefix for all messages
+  topic_prefix: "homeassistant"
+  # QoS Level (0=At most once, 1=At least once, 2=Exactly once)
+  qos: 1
+  # Keep Alive in seconds
+  keepalive: 60
+  # Reconnect settings
+  reconnect:
+    min_delay: 5
+    max_delay: 300
+    exponential: true
+
+# M-Bus Configuration
+mbus:
+  # Serial Port (e.g., /dev/ttyUSB0 on Linux, COM3 on Windows)
+  port: "/dev/ttyUSB0"
+  # Baudrate (typical: 2400, 9600)
+  baudrate: 9600
+  # Timeout for serial operations in seconds
+  timeout: 5.0
+  # Scan interval for new devices (in seconds)
+  scan_interval: 3600  # 1 hour
+  # Read interval for known devices (in seconds)
+  read_interval: 15
+  # Max retries per device before marking offline
+  max_retries: 3
+  # Delay between retries (in seconds)
+  retry_delay: 2.0
+
+# Home Assistant Integration
+homeassistant:
+  # Discovery prefix (usually "homeassistant")
+  discovery_prefix: "homeassistant"
+  # Availability settings
+  availability:
+    # How long until sensor shows "unavailable" in HA (seconds)
+    expire_after: 300
+    # How often to send heartbeat (seconds)
+    heartbeat_interval: 60
+  # Bridge state topic
+  bridge_state_topic: "mbus/bridge/state"
+
+# Persistence Settings
+persistence:
+  # Database file path
+  database: "/var/lib/mbus-gateway/state.db"
+  # Enable state recovery on startup
+  enable_recovery: true
+  # Keep history for N days (0 = disabled)
+  history_days: 7
+  # Max queue size for offline MQTT messages
+  max_queue_size: 10000
+  # Cleanup old data interval (seconds)
+  cleanup_interval: 86400  # 24 hours
+
+# Monitoring & Health
+monitoring:
+  # Enable HTTP health check endpoint
+  enable_http: true
+  # HTTP Server Port
+  http_port: 8080
+  # Enable Prometheus metrics
+  enable_metrics: true
+  # Metrics endpoint path
+  metrics_path: "/metrics"
+  # Enable systemd watchdog
+  enable_watchdog: true
+  # Watchdog interval (seconds)
+  watchdog_interval: 30
+
+# Logging
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: "INFO"
+  # Log format (json or text)
+  format: "text"
+  # Log file path (empty = stdout only)
+  file: "/var/log/mbus-gateway/gateway.log"
+  # Max log file size (MB)
+  max_size_mb: 50
+  # Number of backup files
+  backup_count: 5
+  # Enable separate error log
+  error_file: "/var/log/mbus-gateway/error.log"
+
+# Gateway Settings
+gateway:
+  # Gateway name (shown in HA)
+  name: "M-Bus Gateway"
+  # Manufacturer
+  manufacturer: "Custom"
+  # Model
+  model: "M-Bus MQTT Gateway v2"
+  # Software version
+  version: "2.0.0"
+
+# Advanced Settings
+advanced:
+  # Enable circuit breaker (pause after N consecutive failures)
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    timeout: 300  # 5 minutes pause
+  # Thread pool size for M-Bus operations
+  worker_threads: 4
+  # Enable graceful shutdown
+  graceful_shutdown_timeout: 30
+  # Memory limit warning (MB)
+  memory_limit_mb: 256
