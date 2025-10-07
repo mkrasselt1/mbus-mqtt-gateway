@@ -36,11 +36,17 @@ class MBusCLI:
         
     def _safe_convert(self, value):
         """Konvertiert Werte sicher zu JSON-serialisierbaren Typen"""
-        if isinstance(value, Decimal):
-            return float(value)
-        elif hasattr(value, '__dict__'):
-            return str(value)
-        return value
+        try:
+            if isinstance(value, Decimal):
+                return float(value)
+            elif isinstance(value, (int, float, str, bool, list, dict)):
+                return value
+            elif hasattr(value, '__dict__'):
+                return str(value)
+            else:
+                return str(value)
+        except:
+            return "conversion_error"
     
     def test_connection(self):
         """Testet die serielle Verbindung"""
@@ -80,27 +86,19 @@ class MBusCLI:
                 self._send_snd_nke(ser, 255)
                 time.sleep(0.1)
                 
-                # 2. Wildcards für Sekundäradresse-Scan
-                # Format: Manufacturer(2) + ID(4) + Version(1) + Medium(1) = 8 Bytes
-                wildcards = [
-                    "FFFFFFFFFFFFFFFF",  # Alle Geräte
-                    "FFFFFFFFFF1FFF1F",  # Elektrische Geräte (Medium 1F)
-                    "FFFFFFFFFF16FF16",  # Wärme/Kälte Geräte (Medium 16)
-                ]
+                # 2. Initialisiere Slaves (wie in GitHub Reference)
+                if not self._init_slaves(ser):
+                    print("[WARNING] Slave-Initialisierung fehlgeschlagen, versuche trotzdem Scan...", file=sys.stderr)
                 
-                found_addresses = set()
+                # 3. Rekursive Sekundäradresse-Suche (GitHub Methode)
+                self.found_devices = []  # Sammelt gefundene Geräte
+                print("[SCAN] Starte rekursive Sekundäradresse-Suche...", file=sys.stderr)
                 
-                for wildcard in wildcards:
-                    print(f"[SCAN] Teste Wildcard: {wildcard}", file=sys.stderr)
-                    
-                    # Search for specific secondary address pattern
-                    devices_found = self._scan_secondary_addresses(ser, wildcard)
-                    
-                    for device in devices_found:
-                        if device["secondary_address"] not in found_addresses:
-                            devices.append(device)
-                            found_addresses.add(device["secondary_address"])
-                            print(f"[FOUND] Gerät: {device['secondary_address']}", file=sys.stderr)
+                # Starte mit vollständigem Wildcard
+                self._scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF")
+                
+                # Übertrage gefundene Geräte
+                devices.extend(self.found_devices)
                 
                 # Zusätzlich: Teste bekannte Primäradressen (0-10)
                 print("[SCAN] Teste zusätzlich Primäradressen 0-10...", file=sys.stderr)
@@ -168,6 +166,40 @@ class MBusCLI:
         except Exception as e:
             return {"parse_error": str(e)}
     
+    def _extract_measurements_from_response(self, response_data):
+        """Extrahiert Messwerte aus M-Bus Response (vereinfacht)"""
+        try:
+            if len(response_data) < 10:
+                return {}
+            
+            # Vereinfachte Extraktion - für den Anfang nur Dummy-Daten
+            # In echter Implementierung würde hier DIF/VIF Parsing stattfinden
+            measurements = {}
+            
+            # Beispiel: Suche nach typischen M-Bus Patterns
+            if len(response_data) > 20:
+                measurements["raw_response"] = {
+                    "value": len(response_data),
+                    "unit": "bytes",
+                    "description": "Response Length",
+                    "record_index": 1
+                }
+                
+                # Vereinfachte "Energie"-Extraktion (für Demo)
+                # Real würde DIF/VIF parsing verwendet
+                measurements["status"] = {
+                    "value": "online",
+                    "unit": "",
+                    "description": "Device Status",
+                    "record_index": 2
+                }
+            
+            return measurements
+            
+        except Exception as e:
+            print(f"[ERROR] Messwert-Extraktion fehlgeschlagen: {e}", file=sys.stderr)
+            return {}
+
     def read_device(self, address_or_id):
         """Liest Daten von einem spezifischen Gerät (Primär- oder Sekundäradresse)"""
         print(f"[INFO] Lese Daten von {address_or_id}", file=sys.stderr)
@@ -245,6 +277,138 @@ class MBusCLI:
                 "read_duration_seconds": round(time.time() - read_start, 3)
             }
     
+    def _init_slaves(self, ser):
+        """Initialisiert M-Bus Slaves (basiert auf GitHub pyMeterBus)"""
+        try:
+            # Ping ADDRESS_NETWORK_LAYER (253) zuerst
+            if not self._ping_address(ser, 253, retries=0):
+                # Versuche normalen Ping
+                return self._ping_address(ser, 253, retries=3)
+            return True
+        except:
+            return False
+    
+    def _ping_address(self, ser, address, retries=5):
+        """Pingt eine M-Bus Adresse (basiert auf GitHub pyMeterBus)"""
+        for i in range(retries + 1):
+            try:
+                # SND_NKE (ping) senden
+                self._send_snd_nke(ser, address)
+                time.sleep(0.1)
+                
+                # Warte auf ACK
+                response = ser.read(10)
+                
+                # Prüfe auf ACK (0xE5)
+                if len(response) > 0 and response[0] == 0xE5:
+                    return True
+                    
+            except:
+                pass
+            
+            time.sleep(0.5)
+        
+        return False
+    
+    def _scan_secondary_address_range(self, ser, pos, mask):
+        """Rekursive Sekundäradresse-Suche (basiert auf GitHub pyMeterBus)"""
+        # F ist Wildcard
+        if mask[pos].upper() == 'F':
+            l_start, l_end = 0, 9
+        else:
+            if pos < 15:
+                self._scan_secondary_address_range(ser, pos + 1, mask)
+                return
+            else:
+                l_start = l_end = int(mask[pos], 16)
+        
+        if mask[pos].upper() == 'F' or pos == 15:
+            for i in range(l_start, l_end + 1):
+                new_mask = (mask[:pos] + f"{i:1X}" + mask[pos+1:]).upper()
+                
+                result = self._probe_secondary_address(ser, new_mask)
+                
+                if result == True:
+                    # Einzelne Antwort - Gerät gefunden
+                    device_info = self._get_device_info(ser, new_mask)
+                    if device_info:
+                        print(f"[FOUND] Gerät mit ID {new_mask}", file=sys.stderr)
+                        self.found_devices.append(device_info)
+                        
+                elif result == False:
+                    # Kollision - weiter verfeinern
+                    if pos < 15:
+                        self._scan_secondary_address_range(ser, pos + 1, new_mask)
+    
+    def _probe_secondary_address(self, ser, mask):
+        """Testet Sekundäradresse mit SELECT-Frame (basiert auf GitHub pyMeterBus)"""
+        try:
+            # Sende SELECT Frame an Broadcast mit Mask
+            self._send_select_frame(ser, mask)
+            time.sleep(0.1)
+            
+            # Warte auf Antwort
+            response = ser.read(10)
+            
+            if len(response) == 0:
+                return None  # Keine Antwort
+            elif len(response) == 1 and response[0] == 0xE5:
+                # ACK empfangen - Gerät selektiert
+                return True
+            else:
+                # Mehrere oder ungültige Antworten - Kollision
+                return False
+                
+        except:
+            return None
+    
+    def _send_select_frame(self, ser, secondary_address):
+        """Sendet SELECT Frame mit Sekundäradresse"""
+        try:
+            # SELECT Frame: 68 0B 0B 68 53 FD 52 + 8 Bytes Secondary Address + CS 16
+            # Vereinfacht: Nutze SND_UD an Broadcast
+            frame_data = bytes.fromhex(secondary_address)
+            
+            if len(frame_data) == 8:
+                # Baue Frame: 68 0B 0B 68 53 FD 52 + Secondary Address + Checksum + 16
+                header = bytes([0x68, 0x0B, 0x0B, 0x68, 0x53, 0xFD, 0x52])
+                
+                # Berechne Checksum
+                checksum = sum(header[4:] + frame_data) % 256
+                
+                frame = header + frame_data + bytes([checksum, 0x16])
+                ser.write(frame)
+                
+        except:
+            pass
+    
+    def _get_device_info(self, ser, secondary_address):
+        """Holt Geräteinformationen nach SELECT"""
+        try:
+            # REQ_UD2 an selektiertes Gerät
+            req_frame = bytes([0x10, 0x5B, 253, 0x5B + 253, 0x16])  # ADDRESS_NETWORK_LAYER
+            ser.write(req_frame)
+            time.sleep(0.2)
+            
+            # Lese Response
+            response = ser.read(512)
+            
+            if len(response) > 10:
+                device_info = {
+                    "address": 253,
+                    "type": "secondary",
+                    "secondary_address": secondary_address,
+                    "response_length": len(response),
+                    "response_hex": response.hex(),
+                    "found_at": datetime.now().isoformat()
+                }
+                return device_info
+                
+        except:
+            pass
+        
+        return None
+
     def _send_snd_nke(self, ser, address):
         """Sendet SND_NKE (Normalisierung) an Adresse"""
         try:
@@ -338,30 +502,6 @@ class MBusCLI:
             pass
         
         return None
-        """Versucht einen empfangenen Frame zu parsen"""
-        if not frame:
-            return None
-        
-        try:
-            result = {
-                "frame_type": type(frame).__name__,
-                "attributes": {}
-            }
-            
-            # Sammle alle verfügbaren Attribute
-            for attr in dir(frame):
-                if not attr.startswith('_'):
-                    try:
-                        value = getattr(frame, attr)
-                        if not callable(value):
-                            result["attributes"][attr] = self._safe_convert(value)
-                    except:
-                        continue
-            
-            return result
-            
-        except Exception as e:
-            return {"parse_error": str(e)}
 
 
 def main():
