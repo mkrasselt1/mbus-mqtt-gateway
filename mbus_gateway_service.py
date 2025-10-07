@@ -355,6 +355,9 @@ class MBusGatewayService:
                 if device_data:
                     successful_reads += 1
                     
+                    # Debug: JSON-Struktur ausgeben
+                    print(f"[READ] Gerät {address} JSON-Keys: {list(device_data.keys())}")
+                    
                     # Daten zu Home Assistant senden
                     self._publish_mqtt('publish_device_data', address, device_data)
                     
@@ -362,10 +365,13 @@ class MBusGatewayService:
                     record_count = 0
                     if 'records' in device_data:
                         record_count = len(device_data['records'])
+                        print(f"[READ] Gerät {address} hat {record_count} records")
                     elif 'data' in device_data:
                         record_count = len(device_data['data'])
+                        print(f"[READ] Gerät {address} hat {record_count} data items")
                     elif device_data.get('record_count'):
                         record_count = device_data['record_count']
+                        print(f"[READ] Gerät {address} record_count: {record_count}")
                     
                     print(f"[READ] Gerät {address}: ✅ {record_count} Messwerte")
                 else:
