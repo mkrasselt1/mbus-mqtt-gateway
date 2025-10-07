@@ -141,6 +141,9 @@ def main():
     # Scan Kommando
     scan_parser = subparsers.add_parser('scan', help='Scanne M-Bus Adressen')
     
+    # Test Kommando (für Gateway-Kompatibilität)
+    test_parser = subparsers.add_parser('test', help='Teste CLI Tool')
+    
     # Read Kommando
     read_parser = subparsers.add_parser('read', help='Lese M-Bus Gerät')
     read_parser.add_argument('--address', required=True, help='M-Bus Adresse')
@@ -154,6 +157,16 @@ def main():
             "found_devices": devices,
             "timestamp": datetime.now().isoformat(),
             "success": True
+        }
+        print(json.dumps(result, indent=2))
+        
+    elif args.command == 'test':
+        # Einfacher Test - nur prüfen ob das Tool startet
+        result = {
+            "command": "test",
+            "success": True,
+            "message": "CLI Tool verfügbar",
+            "timestamp": datetime.now().isoformat()
         }
         print(json.dumps(result, indent=2))
         

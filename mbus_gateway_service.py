@@ -538,11 +538,12 @@ class MBusGatewayService:
             print("[SERVICE] Starte M-Bus Gateway Service...")
             
             # CLI Tool Verfügbarkeit prüfen
+            print("[SERVICE] Teste CLI Tool Verfügbarkeit...")
             cli_test = self._run_cli_command([
                 "test",
                 "--port", self.config.data["mbus_port"],
                 "--baudrate", str(self.config.data["mbus_baudrate"])
-            ])
+            ], timeout=5)  # Kurzer Timeout für Test
             
             if not cli_test or not cli_test.get("success"):
                 print(f"[ERROR] CLI Tool Test fehlgeschlagen: {cli_test.get('error') if cli_test else 'Keine Antwort'}")
