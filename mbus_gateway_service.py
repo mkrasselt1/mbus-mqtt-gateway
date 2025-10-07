@@ -46,8 +46,11 @@ class MBusGatewayService:
         self.running = True
         self.devices = {}  # address -> device_info
         self.last_discovery = None
-        self.discovery_interval = 15 * 60  # 15 Minuten
-        self.read_interval = 60  # 1 Minute
+        self.discovery_interval = self.config.data.get('discovery_interval_minutes', 15) * 60
+        self.read_interval = self.config.data.get('reading_interval_minutes', 1) * 60
+        
+        # Lade bekannte Geräte aus Config sofort
+        self._load_known_devices_from_config()
         
         # MQTT Setup
         self.mqtt_client = None
@@ -68,6 +71,32 @@ class MBusGatewayService:
         # Signal Handler
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+    
+    def _load_known_devices_from_config(self):
+        """Lädt bekannte Geräte aus der Konfiguration"""
+        known_devices = self.config.data.get('known_devices', [])
+        
+        if known_devices:
+            print(f"[CONFIG] Lade {len(known_devices)} bekannte Geräte aus Config...")
+            
+            for device in known_devices:
+                if device.get('enabled', True):
+                    address = device['address']
+                    device_info = {
+                        "address": address,
+                        "type": device.get('type', 'primary'),
+                        "name": device.get('name', f"Device_{address}"),
+                        "source": "config",
+                        "last_seen": datetime.now().isoformat(),
+                        "discovery_method": "config"
+                    }
+                    
+                    self.devices[address] = device_info
+                    print(f"[CONFIG] Gerät hinzugefügt: Adresse {address} ({device_info['name']})")
+            
+            print(f"[CONFIG] {len(self.devices)} Geräte aus Config geladen")
+        else:
+            print("[CONFIG] Keine bekannten Geräte in Config gefunden")
         
     def _setup_mqtt(self):
         """Initialisiert MQTT Verbindung"""
@@ -344,15 +373,34 @@ class MBusGatewayService:
         """Reading Thread - läuft jede Minute"""
         print("[READING] Reading Thread gestartet")
         
-        # Warte erst auf erste Discovery
-        while not self.devices and not self.shutdown_event.is_set():
-            print("[READING] Warte auf Device Discovery...")
+        # Kurze Wartezeit für System-Initialisierung
+        print("[READING] Warte 10 Sekunden für System-Initialisierung...")
+        time.sleep(10)
+        
+        # Wenn keine Geräte geladen, versuche Discovery
+        if not self.devices:
+            print("[READING] Keine Geräte gefunden, starte Discovery...")
+            self.discover_devices()
+        
+        # Falls immer noch keine Geräte, warte auf Discovery
+        retry_count = 0
+        while not self.devices and not self.shutdown_event.is_set() and retry_count < 6:
+            print(f"[READING] Warte auf Geräte... (Versuch {retry_count + 1}/6)")
             time.sleep(10)
+            retry_count += 1
+        
+        if not self.devices:
+            print("[READING] WARNUNG: Keine Geräte gefunden, aber Reading-Loop startet trotzdem")
+        else:
+            print(f"[READING] {len(self.devices)} Geräte verfügbar, starte Reading-Loop")
         
         while not self.shutdown_event.is_set():
             try:
                 # Daten von allen Geräten lesen
-                self.read_all_devices()
+                if self.devices:
+                    self.read_all_devices()
+                else:
+                    print("[READING] Keine Geräte verfügbar, überspringe Reading")
                 
                 # Warte 1 Minute oder bis Shutdown
                 if self.shutdown_event.wait(self.read_interval):
