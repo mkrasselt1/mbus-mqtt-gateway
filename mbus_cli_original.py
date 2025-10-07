@@ -105,24 +105,29 @@ def read_device(port, baudrate, address):
     
     if json_output:
         try:
-            # Parse JSON Output
-            data = json.loads(json_output)
+            # Parse JSON Output vom originalen pyMeterBus Tool
+            pymeterbus_data = json.loads(json_output)
             
-            # Füge Metadaten hinzu für Kompatibilität
+            # Konvertiere zu Gateway-kompatiblem Format
             result = {
                 "command": "read",
                 "address": address,
                 "success": True,
                 "timestamp": datetime.now().isoformat(),
-                "data": data,
-                "records": data.get("records", []),  # Für Gateway-Kompatibilität
-                "parsing_method": "pymeterbus_official"
+                "parsing_method": "pymeterbus_official",
+                # Originaldaten für Referenz
+                "pymeterbus_data": pymeterbus_data,
+                # Gateway-kompatible Struktur
+                "records": pymeterbus_data.get("records", []),
+                "manufacturer": pymeterbus_data.get("manufacturer", "unknown"),
+                "identification": pymeterbus_data.get("identification", "unknown"),
+                "access_no": pymeterbus_data.get("access_no", 0),
+                "medium": pymeterbus_data.get("medium", 0)
             }
             
-            print(f"[INFO] {len(data.get('records', []))} Records empfangen", file=sys.stderr)
+            print(f"[INFO] {len(result['records'])} Records empfangen", file=sys.stderr)
             
             return result
-            
         except json.JSONDecodeError as e:
             print(f"[ERROR] JSON Parse Fehler: {e}", file=sys.stderr)
             print(f"[ERROR] Output: {json_output}", file=sys.stderr)

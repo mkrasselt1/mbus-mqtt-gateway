@@ -201,10 +201,28 @@ class MBusGatewayService:
                 
                 # Argumentreihenfolge für neues CLI-Format anpassen
                 if cli_tool == "mbus_cli_original.py":
-                    # Neues Format: --port PORT --baudrate BAUDRATE COMMAND
+                    # Neues Format: --port PORT --baudrate BAUDRATE COMMAND [--address ADDR]
                     command = command_args[0]  # Erstes Argument ist das Kommando
-                    port_args = command_args[1:]  # Rest sind Port/Baudrate
-                    full_command = ["python3", cli_tool] + port_args + [command]
+                    
+                    # Alle anderen Argumente extrahieren
+                    other_args = command_args[1:]
+                    
+                    # Port und Baudrate aus den anderen Argumenten extrahieren
+                    port_idx = other_args.index("--port")
+                    baudrate_idx = other_args.index("--baudrate")
+                    
+                    port = other_args[port_idx + 1]
+                    baudrate = other_args[baudrate_idx + 1]
+                    
+                    # Basis-Kommando: --port PORT --baudrate BAUDRATE COMMAND
+                    full_command = ["python3", cli_tool, "--port", port, "--baudrate", baudrate, command]
+                    
+                    # Falls --address vorhanden, anhängen
+                    if "--address" in other_args:
+                        addr_idx = other_args.index("--address")
+                        address = other_args[addr_idx + 1]
+                        full_command.extend(["--address", address])
+                        
                 else:
                     # Altes Format: COMMAND --port PORT --baudrate BAUDRATE
                     full_command = ["python3", cli_tool] + command_args
@@ -435,19 +453,25 @@ class MBusGatewayService:
                     # Daten zu Home Assistant senden
                     self._publish_mqtt('publish_device_data', address, device_data)
                     
-                    # Messwerte zählen (CLI V2 verwendet 'records' oder 'data')
+                    # Messwerte zählen (verschiedene CLI Formate unterstützen)
                     record_count = 0
                     if 'records' in device_data:
                         record_count = len(device_data['records'])
                         print(f"[READ] Gerät {address} hat {record_count} records")
                     elif 'data' in device_data and 'records' in device_data['data']:
-                        # Neues mbus_cli_simple.py Format: data.records
+                        # mbus_cli_simple.py Format: data.records
                         record_count = len(device_data['data']['records'])
                         # Flache Struktur für MQTT Publisher erstellen
                         device_data['records'] = device_data['data']['records']
                         print(f"[READ] Gerät {address} hat {record_count} records (aus data.records)")
+                    elif 'data' in device_data and isinstance(device_data['data'], dict) and 'records' in device_data['data']:
+                        # pyMeterBus original Format
+                        record_count = len(device_data['data']['records'])
+                        # Für MQTT Publisher kompatibel machen
+                        device_data['records'] = device_data['data']['records']
+                        print(f"[READ] Gerät {address} hat {record_count} records (pyMeterBus Format)")
                     elif 'data' in device_data:
-                        record_count = len(device_data['data'])
+                        record_count = len(device_data['data']) if isinstance(device_data['data'], list) else 1
                         print(f"[READ] Gerät {address} hat {record_count} data items")
                     elif device_data.get('record_count'):
                         record_count = device_data['record_count']
