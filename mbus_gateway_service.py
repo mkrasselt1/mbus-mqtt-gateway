@@ -71,7 +71,7 @@ class MBusGatewayService:
         
         # CLI Kommando Setup  
         use_cli_v2 = self.config.data.get('use_cli_v2', True)
-        cli_script = "mbus_cli_simple.py" if use_cli_v2 else "mbus_cli.py"
+        cli_script = "mbus_cli_original.py" if use_cli_v2 else "mbus_cli.py"
         
         self.cli_command = [
             sys.executable,  # Python Executable
@@ -192,7 +192,7 @@ class MBusGatewayService:
             # CLI Tool bestimmen falls nicht angegeben
             if cli_tool is None:
                 use_cli_v2 = self.config.data.get('use_cli_v2', True)
-                cli_tool = "mbus_cli_simple.py" if use_cli_v2 else "mbus_cli.py"
+                cli_tool = "mbus_cli_original.py" if use_cli_v2 else "mbus_cli.py"
             
             # M-Bus Lock acquired - verhindert gleichzeitige Bus-Zugriffe
             print(f"[CLI] Warte auf M-Bus Lock...")
@@ -295,7 +295,7 @@ class MBusGatewayService:
         print("[DISCOVERY] Keine bekannten Geräte in Config - starte Bus-Scan...")
         
         # Verwende CLI V2 für bessere Kompatibilität  
-        cli_tool = "mbus_cli_simple.py" if self.config.data.get('use_cli_v2', True) else "mbus_cli.py"
+        cli_tool = "mbus_cli_original.py" if self.config.data.get('use_cli_v2', True) else "mbus_cli.py"
         
         # CLI Scan ausführen
         cli_args = [
