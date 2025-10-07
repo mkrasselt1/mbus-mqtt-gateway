@@ -198,8 +198,16 @@ class MBusGatewayService:
             print(f"[CLI] Warte auf M-Bus Lock...")
             with self.mbus_lock:
                 print(f"[CLI] M-Bus Lock erhalten")
-                # Vollständiges Kommando zusammenbauen mit spezifischem CLI Tool
-                full_command = ["python3", cli_tool] + command_args
+                
+                # Argumentreihenfolge für neues CLI-Format anpassen
+                if cli_tool == "mbus_cli_original.py":
+                    # Neues Format: --port PORT --baudrate BAUDRATE COMMAND
+                    command = command_args[0]  # Erstes Argument ist das Kommando
+                    port_args = command_args[1:]  # Rest sind Port/Baudrate
+                    full_command = ["python3", cli_tool] + port_args + [command]
+                else:
+                    # Altes Format: COMMAND --port PORT --baudrate BAUDRATE
+                    full_command = ["python3", cli_tool] + command_args
                 
                 print(f"[CLI] Führe aus: {' '.join(full_command)}")
                 
