@@ -169,6 +169,9 @@ class HomeAssistantMQTT:
             if records:
                 print(f"[HA-MQTT] Publiziere CLI V2 Daten für Gerät {device_id} ({len(records)} Records)")
                 
+                # Dynamische Discovery für gefundene Records
+                self._send_dynamic_discovery_for_records(address, device_id, records, cli_response)
+                
                 for i, record in enumerate(records):
                     value = record.get("value")
                     unit = record.get("unit", "")
@@ -178,10 +181,11 @@ class HomeAssistantMQTT:
                         # Topic-Name basierend auf Datentyp bestimmen
                         topic_name = self._map_record_to_topic(record, i)
                         if topic_name:
-                            topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/{topic_name}/state"
+                            # Eindeutiges Topic mit Index für jeden Record
+                            topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/{topic_name}_{i}/state"
                             self.mqtt_client.publish(topic, str(value), retain=True)
                             
-                            print(f"[HA-MQTT] {device_id}.{topic_name}: {value} {unit}")
+                            print(f"[HA-MQTT] {device_id}.{topic_name}_{i}: {value} {unit}")
             
             # Altes CLI Format (falls verwendet)
             elif data:
@@ -294,6 +298,130 @@ class HomeAssistantMQTT:
         
         print(f"[HA-MQTT] Record {index} unbekannt - verwende Fallback '{topic}' (Unit: {unit}, Value: {value})")
         return topic
+    
+    def _send_dynamic_discovery_for_records(self, address: int, device_id: str, records: list, cli_response: dict):
+        """Sendet dynamische Home Assistant Discovery basierend auf CLI V2 Records"""
+        try:
+            if device_id in self.discovery_sent:
+                return  # Discovery bereits gesendet
+            
+            print(f"[HA-MQTT] Sende dynamische Discovery für {device_id} mit {len(records)} Records")
+            
+            # Device Information aus CLI Response
+            manufacturer = cli_response.get("manufacturer", "M-Bus")
+            identification = cli_response.get("identification", device_id)
+            
+            # Device-Konfiguration
+            device_config = {
+                "identifiers": [f"mbus_{device_id}"],
+                "name": f"M-Bus {identification}",
+                "manufacturer": manufacturer,
+                "model": "M-Bus Meter",
+                "sw_version": "CLI-Gateway-v2.0"
+            }
+            
+            # Basis-Konfiguration für alle Sensoren
+            base_config = {
+                "device": device_config,
+                "availability": [
+                    {
+                        "topic": f"{self.gateway_topic}/state",
+                        "value_template": "{{ value_json.state }}"
+                    }
+                ],
+                "availability_mode": "any"
+            }
+            
+            # Für jeden Record eine Discovery-Nachricht erstellen
+            for i, record in enumerate(records):
+                value = record.get("value")
+                unit = record.get("unit", "")
+                function_field = record.get("function_field", "")
+                
+                if value is not None:
+                    topic_name = self._map_record_to_topic(record, i)
+                    if topic_name:  # Nur wenn topic_name nicht None ist
+                        sensor_name = self._get_sensor_name_from_topic(topic_name, unit, function_field)
+                        device_class = self._get_device_class_from_topic(topic_name)
+                        state_class = self._get_state_class_from_topic(topic_name)
+                        icon = self._get_icon_from_topic(topic_name)
+                        
+                        # Sensor-Konfiguration mit eindeutiger ID pro Record
+                        unique_sensor_id = f"mbus_{device_id}_{topic_name}_{i}"  # Index hinzufügen für Eindeutigkeit
+                        state_topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/{topic_name}_{i}/state"
+                        
+                        sensor_config = {
+                            **base_config,
+                            "name": f"M-Bus {identification} {sensor_name} {i}",  # Index auch im Namen für Klarheit
+                            "unique_id": unique_sensor_id,
+                            "state_topic": state_topic,
+                            "unit_of_measurement": unit,
+                            "icon": icon
+                        }
+                        
+                        # Optional: Device Class und State Class hinzufügen
+                        if device_class:
+                            sensor_config["device_class"] = device_class
+                        if state_class:
+                            sensor_config["state_class"] = state_class
+                        
+                        # Discovery-Nachricht senden
+                        discovery_topic = f"{self.topic_prefix}/sensor/{unique_sensor_id}/config"
+                        self.mqtt_client.publish(
+                            discovery_topic,
+                            json.dumps(sensor_config),
+                            retain=True
+                        )
+                        
+                        print(f"[HA-MQTT] Discovery gesendet: {sensor_name} ({unit})")
+            
+            # Gerät als verfügbar markieren
+            availability_topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/availability"
+            self.mqtt_client.publish(availability_topic, "online", retain=True)
+            
+            # Discovery-Status speichern
+            self.discovery_sent.add(device_id)
+            
+        except Exception as e:
+            print(f"[HA-MQTT] Dynamische Discovery Fehler für {device_id}: {e}")
+    
+    def _get_sensor_name_from_topic(self, topic_name: str, unit: str, function_field: str) -> str:
+        """Mappt Topic-Namen zu benutzerfreundlichen Sensor-Namen"""
+        name_map = {
+            "energy": "Energy",
+            "power": "Power", 
+            "voltage": "Voltage",
+            "current": "Current"
+        }
+        return name_map.get(topic_name, function_field or topic_name.title())
+    
+    def _get_device_class_from_topic(self, topic_name: str) -> Optional[str]:
+        """Mappt Topic-Namen zu Home Assistant Device Classes"""
+        class_map = {
+            "energy": "energy",
+            "power": "power",
+            "voltage": "voltage", 
+            "current": "current"
+        }
+        return class_map.get(topic_name)
+    
+    def _get_state_class_from_topic(self, topic_name: str) -> Optional[str]:
+        """Mappt Topic-Namen zu Home Assistant State Classes"""
+        if topic_name == "energy":
+            return "total_increasing"
+        elif topic_name in ["power", "voltage", "current"]:
+            return "measurement"
+        return None
+    
+    def _get_icon_from_topic(self, topic_name: str) -> str:
+        """Mappt Topic-Namen zu Home Assistant Icons"""
+        icon_map = {
+            "energy": "mdi:flash",
+            "power": "mdi:lightning-bolt",
+            "voltage": "mdi:flash-triangle",
+            "current": "mdi:current-ac"
+        }
+        return icon_map.get(topic_name, "mdi:gauge")
     
     def publish_gateway_status(self, status: str):
         """Publiziert Gateway-Status"""
