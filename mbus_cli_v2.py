@@ -367,7 +367,7 @@ class MBusCLI_V2:
             
             for record in frame.records:
                 record_data = {
-                    "value": getattr(record, 'parsed_value', None),
+                    "value": self._convert_to_json_safe(getattr(record, 'parsed_value', None)),
                     "unit": getattr(record, 'unit', None),
                     "function_field": getattr(record, 'function_field', None),
                     "storage_number": getattr(record, 'storage_number', None),
@@ -378,14 +378,39 @@ class MBusCLI_V2:
             
             return {
                 "manufacturer": getattr(frame, 'manufacturer', None),
-                "identification": getattr(frame, 'identification', None),
+                "identification": self._convert_to_json_safe(getattr(frame, 'identification', None)),
                 "version": getattr(frame, 'version', None),
                 "device_type": getattr(frame, 'device_type', None),
                 "records": data_records,
                 "record_count": len(data_records)
             }
-        except:
+        except Exception as e:
+            print(f"[DEBUG] meterbus data extraction error: {e}", file=sys.stderr)
             return None
+    
+    def _convert_to_json_safe(self, value):
+        """Konvertiert Werte zu JSON-sicheren Typen"""
+        try:
+            from decimal import Decimal
+            if isinstance(value, Decimal):
+                return float(value)
+            elif hasattr(value, '__dict__'):
+                return str(value)
+            return value
+        except:
+            return str(value) if value is not None else None
+    
+    def _json_serializer(self, obj):
+        """JSON Serializer für komplexe Objekte"""
+        try:
+            from decimal import Decimal
+            if isinstance(obj, Decimal):
+                return float(obj)
+            elif hasattr(obj, '__dict__'):
+                return str(obj)
+            return str(obj)
+        except:
+            return str(obj)
     
     def _parse_raw_mbus_frame(self, data):
         """Parst M-Bus Frame manuell (integriert aus mbus_frame_parser.py)"""
@@ -568,6 +593,19 @@ class MBusCLI_V2:
         return length_table[dif & 0x07]
 
 
+def json_serializer(obj):
+    """JSON Serializer für komplexe Objekte"""
+    try:
+        from decimal import Decimal
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif hasattr(obj, '__dict__'):
+            return str(obj)
+        return str(obj)
+    except:
+        return str(obj)
+
+
 def main():
     parser = argparse.ArgumentParser(description='M-Bus CLI Tool V2 (meterbus Library)')
     parser.add_argument('command', choices=['test', 'scan', 'read'], 
@@ -602,7 +640,7 @@ def main():
         
         # JSON Ausgabe mit Decimal-Unterstützung
         if result:
-            print(json.dumps(result, ensure_ascii=False, default=self._json_serializer))
+            print(json.dumps(result, ensure_ascii=False, default=json_serializer))
         
     except KeyboardInterrupt:
         print("\n[INFO] Abgebrochen durch Benutzer", file=sys.stderr)
