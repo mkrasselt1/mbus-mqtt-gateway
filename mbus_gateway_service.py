@@ -123,11 +123,11 @@ class MBusGatewayService:
         self.running = False
         self.shutdown_event.set()
     
-    def _run_cli_command(self, command_args: List[str], timeout: int = 30) -> Optional[Dict]:
+    def _run_cli_command(self, command_args: List[str], timeout: int = 30, cli_tool: str = "mbus_cli.py") -> Optional[Dict]:
         """Führt CLI Kommando aus und parst JSON Response"""
         try:
-            # Vollständiges Kommando zusammenbauen
-            full_command = self.cli_command + command_args
+            # Vollständiges Kommando zusammenbauen mit spezifischem CLI Tool
+            full_command = ["python3", cli_tool] + command_args
             
             print(f"[CLI] Führe aus: {' '.join(full_command)}")
             
@@ -167,18 +167,51 @@ class MBusGatewayService:
         print("[DISCOVERY] Starte M-Bus Device Discovery...")
         start_time = time.time()
         
+        # Verwende CLI V2 für bessere Kompatibilität  
+        cli_tool = "mbus_cli_v2.py" if self.config.data.get('use_cli_v2', True) else "mbus_cli.py"
+        
         # CLI Scan ausführen
         cli_args = [
             "scan",
             "--port", self.config.data["mbus_port"],
-            "--baudrate", str(self.config.data["mbus_baudrate"]),
-            "--timeout", "3.0"
+            "--baudrate", str(self.config.data["mbus_baudrate"])
         ]
         
-        response = self._run_cli_command(cli_args, timeout=120)  # 2 Minuten Timeout für Scan
+        response = self._run_cli_command(cli_args, timeout=120, cli_tool=cli_tool)  # 2 Minuten Timeout für Scan
         
         if not response or not response.get("success"):
             print(f"[DISCOVERY] Fehlgeschlagen: {response.get('error') if response else 'Keine Antwort'}")
+            
+            # Fallback: Verwende bekannte Geräte aus Config
+            known_devices = self.config.data.get('known_devices', [])
+            if known_devices:
+                print(f"[DISCOVERY] Fallback: Verwende {len(known_devices)} bekannte Geräte aus Config")
+                for device in known_devices:
+                    if device.get('enabled', True):
+                        address = device['address']
+                        if address not in self.devices:
+                            print(f"[DISCOVERY] Bekanntes Gerät hinzugefügt: Adresse {address}")
+                            
+                            device_info = {
+                                "address": address,
+                                "type": device.get('type', 'primary'),
+                                "name": device.get('name', f"Device_{address}"),
+                                "source": "config"
+                            }
+                            
+                            # Home Assistant Auto-Discovery senden
+                            self.ha_mqtt.send_device_discovery(device_info)
+                            
+                            # Device Info speichern
+                            self.devices[address] = {
+                                "address": address,
+                                "type": device_info["type"],
+                                "last_seen": datetime.now().isoformat(),
+                                "discovery_method": "config",
+                                "name": device_info["name"]
+                            }
+                return len(known_devices) > 0
+            
             return False
         
         # Devices verarbeiten
