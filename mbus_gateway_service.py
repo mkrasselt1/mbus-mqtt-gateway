@@ -71,7 +71,7 @@ class MBusGatewayService:
         
         # CLI Kommando Setup  
         use_cli_v2 = self.config.data.get('use_cli_v2', True)
-        cli_script = "mbus_cli_v2.py" if use_cli_v2 else "mbus_cli.py"
+        cli_script = "mbus_cli_simple.py" if use_cli_v2 else "mbus_cli.py"
         
         self.cli_command = [
             sys.executable,  # Python Executable
@@ -192,7 +192,7 @@ class MBusGatewayService:
             # CLI Tool bestimmen falls nicht angegeben
             if cli_tool is None:
                 use_cli_v2 = self.config.data.get('use_cli_v2', True)
-                cli_tool = "mbus_cli_v2.py" if use_cli_v2 else "mbus_cli.py"
+                cli_tool = "mbus_cli_simple.py" if use_cli_v2 else "mbus_cli.py"
             
             # M-Bus Lock acquired - verhindert gleichzeitige Bus-Zugriffe
             print(f"[CLI] Warte auf M-Bus Lock...")
@@ -295,7 +295,7 @@ class MBusGatewayService:
         print("[DISCOVERY] Keine bekannten Geräte in Config - starte Bus-Scan...")
         
         # Verwende CLI V2 für bessere Kompatibilität  
-        cli_tool = "mbus_cli_v2.py" if self.config.data.get('use_cli_v2', True) else "mbus_cli.py"
+        cli_tool = "mbus_cli_simple.py" if self.config.data.get('use_cli_v2', True) else "mbus_cli.py"
         
         # CLI Scan ausführen
         cli_args = [
@@ -432,6 +432,12 @@ class MBusGatewayService:
                     if 'records' in device_data:
                         record_count = len(device_data['records'])
                         print(f"[READ] Gerät {address} hat {record_count} records")
+                    elif 'data' in device_data and 'records' in device_data['data']:
+                        # Neues mbus_cli_simple.py Format: data.records
+                        record_count = len(device_data['data']['records'])
+                        # Flache Struktur für MQTT Publisher erstellen
+                        device_data['records'] = device_data['data']['records']
+                        print(f"[READ] Gerät {address} hat {record_count} records (aus data.records)")
                     elif 'data' in device_data:
                         record_count = len(device_data['data'])
                         print(f"[READ] Gerät {address} hat {record_count} data items")
