@@ -541,7 +541,9 @@ class MBusCLI_V2:
                         raw_value = int.from_bytes(value_bytes, byteorder='little')
                         
                         # VIF-basierte Skalierung anwenden
+                        print(f"[VIF-DEBUG] Record: Raw={raw_value}, VIF=0x{vif:02X}", file=sys.stderr)
                         scaled_value, unit = self._apply_vif_scaling(raw_value, vif)
+                        print(f"[VIF-DEBUG] Skaliert: {scaled_value} {unit} (Faktor: {scaled_value/raw_value if raw_value != 0 else 'N/A'})", file=sys.stderr)
                         record["value"] = scaled_value
                         record["unit"] = unit
                         record["raw_value"] = raw_value  # Für Debug-Zwecke
