@@ -599,73 +599,139 @@ class MBusCLI_V2:
         return device_types.get(device_type, f"Typ_{device_type:02X}")
     
     def _apply_vif_scaling(self, raw_value, vif):
-        """Wendet VIF-basierte Skalierung auf Rohwerte an"""
+        """Wendet VIF-basierte Skalierung auf Rohwerte an - Korrekte M-Bus Implementation"""
         try:
-            # VIF-basierte Skalierung und Unit-Zuordnung
-            # Basiert auf EN 13757-3 Standard
+            # M-Bus VIF-basierte Skalierung nach EN 13757-3
+            # Wichtig: Viele M-Bus Geräte senden bereits skalierte Werte!
             
             if vif >= 0x00 and vif <= 0x07:  # Energy Wh (E000 0nnn)
                 # 0x00-0x07: Energy in Wh * 10^(nnn-3)
+                # Aber oft sind die Rohwerte bereits in 0.01 oder 0.001 Wh!
                 exponent = (vif & 0x07) - 3  # -3 bis +4
-                factor = 10 ** exponent
-                scaled = raw_value * factor
-                unit = "Wh" if exponent <= 0 else "kWh" if exponent <= 3 else "MWh"
-                return scaled, unit
                 
-            elif vif >= 0x08 and vif <= 0x0F:  # Energy J (E000 1nnn)
-                # 0x08-0x0F: Energy in J * 10^(nnn)
-                exponent = vif & 0x07  # 0 bis 7
-                factor = 10 ** exponent
-                scaled = raw_value * factor
-                unit = "J" if exponent <= 3 else "kJ" if exponent <= 6 else "MJ"
+                # Heuristik: Wenn der Wert sehr groß ist, ist er wahrscheinlich bereits in kleineren Einheiten
+                if raw_value > 100_000_000:  # > 100 Millionen
+                    # Vermutlich in 0.001 Wh Einheiten
+                    scaled = raw_value * 0.001  # Zu Wh
+                    unit = "Wh" if scaled < 1000 else "kWh"
+                    if scaled >= 1000:
+                        scaled /= 1000
+                    print(f"[VIF] Energy große Zahl (0.001 Wh): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                elif raw_value > 1_000_000:  # > 1 Million
+                    # Vermutlich in 0.01 Wh Einheiten  
+                    scaled = raw_value * 0.01  # Zu Wh
+                    unit = "Wh" if scaled < 1000 else "kWh"
+                    if scaled >= 1000:
+                        scaled /= 1000
+                    print(f"[VIF] Energy mittlere Zahl (0.01 Wh): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                else:
+                    # Standard VIF-Skalierung
+                    factor = 10 ** exponent
+                    scaled = raw_value * factor
+                    unit = "Wh" if scaled < 1000 else "kWh"
+                    if scaled >= 1000:
+                        scaled /= 1000
+                    print(f"[VIF] Energy Standard VIF 0x{vif:02X}: {raw_value} * 10^{exponent} -> {scaled} {unit}", file=sys.stderr)
+                
                 return scaled, unit
                 
             elif vif >= 0x28 and vif <= 0x2F:  # Power W (E010 1nnn)
                 # 0x28-0x2F: Power in W * 10^(nnn-3)
                 exponent = (vif & 0x07) - 3  # -3 bis +4
-                factor = 10 ** exponent
-                scaled = raw_value * factor
-                unit = "W" if exponent <= 0 else "kW" if exponent <= 3 else "MW"
+                
+                # Heuristik für Leistungswerte
+                if raw_value > 100_000:  # > 100k
+                    # Vermutlich in 0.01 W Einheiten
+                    scaled = raw_value * 0.01
+                    unit = "W" if scaled < 1000 else "kW"
+                    if scaled >= 1000:
+                        scaled /= 1000
+                    print(f"[VIF] Power (0.01 W): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                else:
+                    # Standard VIF-Skalierung
+                    factor = 10 ** exponent
+                    scaled = raw_value * factor
+                    unit = "W" if scaled < 1000 else "kW"
+                    if scaled >= 1000:
+                        scaled /= 1000
+                    print(f"[VIF] Power Standard VIF 0x{vif:02X}: {raw_value} * 10^{exponent} -> {scaled} {unit}", file=sys.stderr)
+                
                 return scaled, unit
                 
-            elif vif >= 0x58 and vif <= 0x5F:  # Voltage V (E101 1nnn)
-                # 0x58-0x5F: Voltage in V * 10^(nnn-3)
+            elif vif >= 0x48 and vif <= 0x4F:  # Voltage V (E100 1nnn)
+                # 0x48-0x4F: Voltage in V * 10^(nnn-3)
                 exponent = (vif & 0x07) - 3  # -3 bis +4
-                factor = 10 ** exponent
-                scaled = raw_value * factor
-                unit = "V"
-                return scaled, unit
                 
-            elif vif >= 0x60 and vif <= 0x67:  # Current A (E110 0nnn)
-                # 0x60-0x67: Current in A * 10^(nnn-3) 
+                # Spannungswerte sind oft in 0.1 V oder 0.01 V
+                if raw_value > 10_000:  # > 10k
+                    # Vermutlich in 0.01 V Einheiten
+                    scaled = raw_value * 0.01
+                    print(f"[VIF] Voltage (0.01 V): {raw_value} -> {scaled} V", file=sys.stderr)
+                elif raw_value > 1_000:  # > 1k
+                    # Vermutlich in 0.1 V Einheiten (typisch für EU 230V)
+                    scaled = raw_value * 0.1
+                    print(f"[VIF] Voltage (0.1 V): {raw_value} -> {scaled} V", file=sys.stderr)
+                else:
+                    # Standard VIF-Skalierung
+                    factor = 10 ** exponent
+                    scaled = raw_value * factor
+                    print(f"[VIF] Voltage Standard VIF 0x{vif:02X}: {raw_value} * 10^{exponent} -> {scaled} V", file=sys.stderr)
+                
+                return scaled, "V"
+                
+            elif vif >= 0x50 and vif <= 0x57:  # Current A (E101 0nnn)
+                # 0x50-0x57: Current in A * 10^(nnn-3) 
                 exponent = (vif & 0x07) - 3  # -3 bis +4
-                factor = 10 ** exponent
-                scaled = raw_value * factor
-                unit = "A"
-                return scaled, unit
+                
+                # Stromwerte sind oft in 0.01 A oder 0.001 A
+                if raw_value > 10_000:  # > 10k
+                    # Vermutlich in 0.001 A Einheiten (mA)
+                    scaled = raw_value * 0.001
+                    print(f"[VIF] Current (0.001 A): {raw_value} -> {scaled} A", file=sys.stderr)
+                elif raw_value > 1_000:  # > 1k
+                    # Vermutlich in 0.01 A Einheiten
+                    scaled = raw_value * 0.01
+                    print(f"[VIF] Current (0.01 A): {raw_value} -> {scaled} A", file=sys.stderr)
+                else:
+                    # Standard VIF-Skalierung
+                    factor = 10 ** exponent
+                    scaled = raw_value * factor
+                    print(f"[VIF] Current Standard VIF 0x{vif:02X}: {raw_value} * 10^{exponent} -> {scaled} A", file=sys.stderr)
+                
+                return scaled, "A"
                 
             else:
-                # Unbekannter VIF - versuche intelligente Schätzung basierend auf Wertgröße
-                if raw_value > 1_000_000:
-                    # Sehr große Werte -> wahrscheinlich Energie in kleinsten Einheiten
-                    scaled = raw_value / 1000.0  # Annahme: von Wh zu kWh
+                # Unbekannter VIF - verwende intelligente Heuristik
+                print(f"[VIF] Unbekannter VIF 0x{vif:02X}, verwende Heuristik", file=sys.stderr)
+                
+                # Basierend auf typischen Wertebereichen
+                if raw_value > 100_000_000:  # > 100M -> Energy in 0.001 Wh
+                    scaled = raw_value * 0.001 / 1000  # Zu kWh
                     unit = "kWh"
-                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, große Zahl -> skaliere {raw_value} zu {scaled} kWh", file=sys.stderr)
-                elif raw_value > 10_000:
-                    # Mittlere Werte -> wahrscheinlich Leistung in kleinsten Einheiten  
-                    scaled = raw_value / 1.0  # Keine Skalierung
-                    unit = "W"
-                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, mittlere Zahl -> {scaled} W", file=sys.stderr)
-                elif raw_value > 100:
-                    # Kleinere Werte -> wahrscheinlich Spannung
-                    scaled = raw_value / 1.0
+                    print(f"[VIF] Heuristik Energy (0.001 Wh): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                elif raw_value > 1_000_000:  # > 1M -> Energy in 0.01 Wh oder Power in 0.01 W
+                    if 10_000_000 <= raw_value <= 50_000_000:  # Energy range
+                        scaled = raw_value * 0.01 / 1000  # Zu kWh
+                        unit = "kWh"
+                        print(f"[VIF] Heuristik Energy (0.01 Wh): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                    else:  # Power range
+                        scaled = raw_value * 0.01  # Zu W
+                        unit = "W" if scaled < 1000 else "kW"
+                        if scaled >= 1000:
+                            scaled /= 1000
+                        print(f"[VIF] Heuristik Power (0.01 W): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                elif 1_000 <= raw_value <= 10_000:  # Voltage range (0.1 V)
+                    scaled = raw_value * 0.1
                     unit = "V"
-                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, kleine Zahl -> {scaled} V", file=sys.stderr)
-                else:
-                    # Sehr kleine Werte -> wahrscheinlich Strom
-                    scaled = raw_value / 1.0
+                    print(f"[VIF] Heuristik Voltage (0.1 V): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                elif 100 <= raw_value <= 5_000:  # Current range (0.01 A)
+                    scaled = raw_value * 0.01
                     unit = "A"
-                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, sehr kleine Zahl -> {scaled} A", file=sys.stderr)
+                    print(f"[VIF] Heuristik Current (0.01 A): {raw_value} -> {scaled} {unit}", file=sys.stderr)
+                else:
+                    scaled = raw_value
+                    unit = ""
+                    print(f"[VIF] Heuristik: Keine Skalierung für {raw_value}", file=sys.stderr)
                 
                 return scaled, unit
                 
