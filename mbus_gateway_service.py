@@ -52,16 +52,26 @@ class MBusGatewayService:
         # Lade bekannte Geräte aus Config sofort
         self._load_known_devices_from_config()
         
-        # MQTT Setup
+        # MQTT Setup (optional für Test-Modus)
         self.mqtt_client = None
         self.ha_mqtt = None
-        self._setup_mqtt()
+        self.test_mode = os.environ.get('MBUS_TEST_MODE', 'false').lower() == 'true'
         
-        # CLI Kommando Setup
+        if not self.test_mode:
+            self._setup_mqtt()
+        else:
+            print("[SERVICE] Test-Modus: MQTT deaktiviert")
+        
+        # CLI Kommando Setup  
+        use_cli_v2 = self.config.data.get('use_cli_v2', True)
+        cli_script = "mbus_cli_v2.py" if use_cli_v2 else "mbus_cli.py"
+        
         self.cli_command = [
             sys.executable,  # Python Executable
-            "mbus_cli.py"    # CLI Script
+            cli_script       # CLI Script
         ]
+        
+        print(f"[SERVICE] CLI: {cli_script}")
         
         # Threading
         self.discovery_thread = None
@@ -97,6 +107,14 @@ class MBusGatewayService:
             print(f"[CONFIG] {len(self.devices)} Geräte aus Config geladen")
         else:
             print("[CONFIG] Keine bekannten Geräte in Config gefunden")
+    
+    def _publish_mqtt(self, method_name, *args, **kwargs):
+        """Hilfsfunktion für MQTT Publishing mit Null-Check"""
+        if self.ha_mqtt and hasattr(self.ha_mqtt, method_name):
+            method = getattr(self.ha_mqtt, method_name)
+            return method(*args, **kwargs)
+        elif not self.test_mode:
+            print(f"[MQTT] Warnung: {method_name} nicht verfügbar")
         
     def _setup_mqtt(self):
         """Initialisiert MQTT Verbindung"""
@@ -138,7 +156,8 @@ class MBusGatewayService:
         if rc == 0:
             print("[MQTT] Erfolgreich verbunden")
             # Gateway Status publizieren
-            self.ha_mqtt.publish_gateway_status("online")
+            if self.ha_mqtt:
+                self.ha_mqtt.publish_gateway_status("online")
         else:
             print(f"[MQTT] Verbindung fehlgeschlagen: Code {rc}")
     
@@ -229,7 +248,7 @@ class MBusGatewayService:
                             }
                             
                             # Home Assistant Auto-Discovery senden
-                            self.ha_mqtt.send_device_discovery(device_info)
+                            self._publish_mqtt('send_device_discovery', device_info)
                             
                             # Device Info speichern
                             self.devices[address] = {
@@ -255,7 +274,7 @@ class MBusGatewayService:
                 print(f"[DISCOVERY] Neues Gerät: Adresse {address}")
                 
                 # Home Assistant Auto-Discovery senden
-                self.ha_mqtt.send_device_discovery(device_info)
+                self._publish_mqtt('send_device_discovery', device_info)
             
             # Device Info aktualisieren
             self.devices[address] = {
@@ -274,7 +293,7 @@ class MBusGatewayService:
         print(f"[DISCOVERY] Abgeschlossen: {len(found_devices)} Geräte gefunden ({new_device_count} neu) in {duration:.2f}s")
         
         # Gateway Status Update
-        self.ha_mqtt.update_gateway_status({
+        self._publish_mqtt('update_gateway_status', {
             "device_count": len(self.devices),
             "last_discovery": self.last_discovery.isoformat(),
             "discovery_duration": round(duration, 2)
@@ -324,7 +343,7 @@ class MBusGatewayService:
                     successful_reads += 1
                     
                     # Daten zu Home Assistant senden
-                    self.ha_mqtt.publish_device_data(address, device_data)
+                    self._publish_mqtt('publish_device_data', address, device_data)
                     
                     print(f"[READ] Gerät {address}: ✅ {len(device_data.get('data', {}))} Messwerte")
                 else:
@@ -339,7 +358,7 @@ class MBusGatewayService:
         print(f"[READ] Zyklus abgeschlossen: {successful_reads}/{len(self.devices)} erfolgreich (Zeit: {read_duration:.2f}s)")
         
         # Gateway Status Update
-        self.ha_mqtt.update_gateway_status({
+        self._publish_mqtt('update_gateway_status', {
             "last_read": datetime.now().isoformat(),
             "successful_reads": successful_reads,
             "total_devices": len(self.devices),
