@@ -275,18 +275,29 @@ class MBusCLI_V2:
                     raw_response = ser.read(available)
                     print(f"[DEBUG] Raw Response: {len(raw_response)} bytes", file=sys.stderr)
                     
+                    # Entferne führendes ACK (0xE5) falls vorhanden
+                    if len(raw_response) > 0 and raw_response[0] == 0xE5:
+                        print("[DEBUG] ACK am Anfang erkannt, entferne es", file=sys.stderr)
+                        frame_data = raw_response[1:]
+                    else:
+                        frame_data = raw_response
+                    
                     # Versuche zuerst meterbus Library
                     meterbus_result = None
                     try:
                         # Simuliere meterbus recv_frame
-                        frame = meterbus.load(raw_response)
-                        if isinstance(frame, meterbus.TelegramLong):
-                            meterbus_result = self._extract_meterbus_data(frame)
+                        if len(frame_data) > 6:
+                            frame = meterbus.load(frame_data)
+                            if isinstance(frame, meterbus.TelegramLong):
+                                meterbus_result = self._extract_meterbus_data(frame)
+                                print("[DEBUG] meterbus Library Parsing erfolgreich", file=sys.stderr)
                     except Exception as e:
                         print(f"[DEBUG] meterbus Library fehlgeschlagen: {e}", file=sys.stderr)
                     
                     # Fallback: Manueller Parser
-                    manual_result = self._parse_raw_mbus_frame(raw_response)
+                    manual_result = self._parse_raw_mbus_frame(frame_data)
+                    if manual_result:
+                        print("[DEBUG] Manueller Parser erfolgreich", file=sys.stderr)
                     
                     # Kombiniere Ergebnisse
                     result = {
@@ -294,15 +305,19 @@ class MBusCLI_V2:
                         "address": address_or_id,
                         "raw_response_hex": raw_response.hex().upper(),
                         "raw_response_length": len(raw_response),
+                        "frame_data_hex": frame_data.hex().upper(),
+                        "frame_data_length": len(frame_data),
                         "read_duration_seconds": round(time.time() - read_start, 3),
                         "timestamp": datetime.now().isoformat()
                     }
                     
                     if meterbus_result:
                         result["meterbus_data"] = meterbus_result
+                        print("[DEBUG] meterbus Daten hinzugefügt", file=sys.stderr)
                     
                     if manual_result:
                         result.update(manual_result)
+                        print("[DEBUG] Manuelle Parser-Daten hinzugefügt", file=sys.stderr)
                     
                     return result
                 else:
