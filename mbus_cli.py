@@ -71,7 +71,7 @@ class MBusCLI:
             }
     
     def scan_devices(self):
-        """Scannt nach verfügbaren M-Bus Geräten mit Sekundäradresse-Scan"""
+        """Scannt nach verfügbaren M-Bus Geräten mit verbessertem Debugging"""
         print(f"[INFO] Scanne M-Bus Geräte auf {self.port} (Baudrate: {self.baudrate})", file=sys.stderr)
         
         devices = []
@@ -79,33 +79,33 @@ class MBusCLI:
         
         try:
             with serial.Serial(self.port, self.baudrate, timeout=self.timeout) as ser:
+                print(f"[DEBUG] Serielle Verbindung geöffnet: {ser.name}", file=sys.stderr)
+                print(f"[DEBUG] Port-Einstellungen: {ser.baudrate} baud, timeout={ser.timeout}s", file=sys.stderr)
+                
+                # 1. Port leeren
+                ser.reset_input_buffer()
+                ser.reset_output_buffer()
+                print("[DEBUG] Input/Output Buffer geleert", file=sys.stderr)
+                
+                # 2. M-Bus Sekundäradresse Scan
                 print("[SCAN] Führe M-Bus Sekundäradresse-Scan durch...", file=sys.stderr)
                 
-                # M-Bus Sekundäradresse Scan
-                # 1. SND_NKE an Broadcast (255) - Normalisierung
+                # 3. SND_NKE an Broadcast (255) - Normalisierung
+                print("[DEBUG] Sende SND_NKE an Broadcast (255)...", file=sys.stderr)
                 self._send_snd_nke(ser, 255)
                 time.sleep(0.1)
                 
-                # 2. Initialisiere Slaves (wie in GitHub Reference)
-                if not self._init_slaves(ser):
-                    print("[WARNING] Slave-Initialisierung fehlgeschlagen, versuche trotzdem Scan...", file=sys.stderr)
-                
-                # 3. Rekursive Sekundäradresse-Suche (GitHub Methode)
-                self.found_devices = []  # Sammelt gefundene Geräte
-                print("[SCAN] Starte rekursive Sekundäradresse-Suche...", file=sys.stderr)
-                
-                # Starte mit vollständigem Wildcard
-                self._scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF")
-                
-                # Übertrage gefundene Geräte
-                devices.extend(self.found_devices)
-                
-                # Zusätzlich: Teste bekannte Primäradressen (0-10)
-                print("[SCAN] Teste zusätzlich Primäradressen 0-10...", file=sys.stderr)
+                # 4. Teste zuerst einfachen Primäradresse-Scan als Baseline
+                print("[DEBUG] Teste zuerst Primäradressen 0-10 als Baseline...", file=sys.stderr)
+                primary_found = 0
                 for address in range(0, 11):
                     try:
+                        print(f"[DEBUG] Teste Primäradresse {address}...", file=sys.stderr)
                         response_data = self._test_primary_address(ser, address)
-                        if response_data:
+                        if response_data and len(response_data) > 1:
+                            primary_found += 1
+                            print(f"[FOUND] Primäradresse {address}: {len(response_data)} bytes", file=sys.stderr)
+                            print(f"[DEBUG] Response: {response_data.hex()[:50]}...", file=sys.stderr)
                             device_info = {
                                 "address": address,
                                 "type": "primary",
@@ -115,9 +115,30 @@ class MBusCLI:
                                 "found_at": datetime.now().isoformat()
                             }
                             devices.append(device_info)
-                            print(f"[FOUND] Primäradresse {address}", file=sys.stderr)
-                    except:
+                        else:
+                            print(f"[DEBUG] Primäradresse {address}: keine Antwort", file=sys.stderr)
+                    except Exception as e:
+                        print(f"[DEBUG] Primäradresse {address} Fehler: {e}", file=sys.stderr)
                         continue
+                
+                print(f"[DEBUG] Primäradresse-Scan abgeschlossen: {primary_found} Geräte gefunden", file=sys.stderr)
+                
+                # 5. Initialisiere Slaves (wie in GitHub Reference)
+                print("[DEBUG] Starte Slave-Initialisierung...", file=sys.stderr)
+                init_result = self._init_slaves(ser)
+                print(f"[DEBUG] Slave-Initialisierung: {'erfolgreich' if init_result else 'fehlgeschlagen'}", file=sys.stderr)
+                
+                # 6. Rekursive Sekundäradresse-Suche (GitHub Methode)
+                self.found_devices = []  # Sammelt gefundene Geräte
+                print("[DEBUG] Starte rekursive Sekundäradresse-Suche...", file=sys.stderr)
+                
+                # Starte mit vollständigem Wildcard
+                self._scan_secondary_address_range(ser, 0, "FFFFFFFFFFFFFFFF")
+                
+                print(f"[DEBUG] Rekursive Suche abgeschlossen: {len(self.found_devices)} Sekundärgeräte", file=sys.stderr)
+                
+                # Übertrage gefundene Geräte
+                devices.extend(self.found_devices)
         
         except Exception as e:
             return {
@@ -289,25 +310,35 @@ class MBusCLI:
             return False
     
     def _ping_address(self, ser, address, retries=5):
-        """Pingt eine M-Bus Adresse (basiert auf GitHub pyMeterBus)"""
+        """Pingt eine M-Bus Adresse mit Debugging"""
+        print(f"[DEBUG] Ping Adresse {address} (max {retries} Versuche)...", file=sys.stderr)
+        
         for i in range(retries + 1):
             try:
+                print(f"[DEBUG] Ping Versuch {i+1}/{retries+1} für Adresse {address}", file=sys.stderr)
+                
                 # SND_NKE (ping) senden
                 self._send_snd_nke(ser, address)
                 time.sleep(0.1)
                 
                 # Warte auf ACK
                 response = ser.read(10)
+                print(f"[DEBUG] Ping Response: {response.hex() if response else 'leer'}", file=sys.stderr)
                 
                 # Prüfe auf ACK (0xE5)
                 if len(response) > 0 and response[0] == 0xE5:
+                    print(f"[DEBUG] ACK empfangen von Adresse {address}", file=sys.stderr)
                     return True
+                elif len(response) > 0:
+                    print(f"[DEBUG] Unerwartete Antwort: {response.hex()}", file=sys.stderr)
                     
-            except:
-                pass
+            except Exception as e:
+                print(f"[DEBUG] Ping Fehler bei Adresse {address}: {e}", file=sys.stderr)
             
-            time.sleep(0.5)
+            if i < retries:
+                time.sleep(0.5)
         
+        print(f"[DEBUG] Ping fehlgeschlagen für Adresse {address}", file=sys.stderr)
         return False
     
     def _scan_secondary_address_range(self, ser, pos, mask):
@@ -410,17 +441,23 @@ class MBusCLI:
         return None
 
     def _send_snd_nke(self, ser, address):
-        """Sendet SND_NKE (Normalisierung) an Adresse"""
+        """Sendet SND_NKE (Normalisierung) an Adresse mit Debugging"""
         try:
             # SND_NKE Frame: 10 40 <addr> <checksum> 16
             checksum = (0x40 + address) % 256
             frame = bytes([0x10, 0x40, address, checksum, 0x16])
+            print(f"[DEBUG] Sende SND_NKE an {address}: {frame.hex()}", file=sys.stderr)
             ser.write(frame)
             time.sleep(0.1)
-            # Response lesen und verwerfen
-            ser.read(10)
-        except:
-            pass
+            
+            # Response lesen und anzeigen
+            response = ser.read(10)
+            if len(response) > 0:
+                print(f"[DEBUG] SND_NKE Response: {response.hex()}", file=sys.stderr)
+            else:
+                print(f"[DEBUG] SND_NKE: Keine Antwort", file=sys.stderr)
+        except Exception as e:
+            print(f"[ERROR] SND_NKE Fehler: {e}", file=sys.stderr)
     
     def _scan_secondary_addresses(self, ser, wildcard_pattern):
         """Scannt Sekundäradressen mit Wildcard-Pattern"""
@@ -484,24 +521,36 @@ class MBusCLI:
         return None
     
     def _test_primary_address(self, ser, address):
-        """Testet Primäradresse"""
+        """Testet Primäradresse mit verbessertem Debugging"""
         try:
+            print(f"[DEBUG] Teste Primäradresse {address}: Sende REQ_UD2...", file=sys.stderr)
+            
+            # Leere Buffer vor Request
+            ser.reset_input_buffer()
+            
             # REQ_UD2 Frame: 10 5B <addr> <checksum> 16
             checksum = (0x5B + address) % 256
             frame = bytes([0x10, 0x5B, address, checksum, 0x16])
+            
+            print(f"[DEBUG] Sende Frame: {frame.hex()}", file=sys.stderr)
             ser.write(frame)
-            time.sleep(0.2)
+            time.sleep(0.3)  # Längere Wartezeit
             
             # Response lesen
-            response = ser.read(255)
+            available = ser.in_waiting
+            print(f"[DEBUG] Bytes verfügbar: {available}", file=sys.stderr)
             
-            if len(response) > 5:  # Mindestens ACK oder Frame
+            if available > 0:
+                response = ser.read(available)
+                print(f"[DEBUG] Response erhalten: {len(response)} bytes: {response.hex()}", file=sys.stderr)
                 return response
-            
-        except:
-            pass
-        
-        return None
+            else:
+                print(f"[DEBUG] Keine Antwort von Adresse {address}", file=sys.stderr)
+                return None
+                
+        except Exception as e:
+            print(f"[ERROR] Fehler bei Primäradresse {address}: {e}", file=sys.stderr)
+            return None
 
 
 def main():
