@@ -391,7 +391,7 @@ class MBusCLI_V2:
             
             return {
                 "manufacturer": getattr(frame, 'manufacturer', None),
-                "identification": self._convert_to_json_safe(getattr(frame, 'identification', None)),
+                "identification": convert_to_json_safe(getattr(frame, 'identification', None)),
                 "version": getattr(frame, 'version', None),
                 "device_type": getattr(frame, 'device_type', None),
                 "records": data_records,
@@ -400,30 +400,6 @@ class MBusCLI_V2:
         except Exception as e:
             print(f"[DEBUG] meterbus data extraction error: {e}", file=sys.stderr)
             return None
-    
-    def _convert_to_json_safe(self, value):
-        """Konvertiert Werte zu JSON-sicheren Typen"""
-        try:
-            from decimal import Decimal
-            if isinstance(value, Decimal):
-                return float(value)
-            elif hasattr(value, '__dict__'):
-                return str(value)
-            return value
-        except:
-            return str(value) if value is not None else None
-    
-    def _json_serializer(self, obj):
-        """JSON Serializer für komplexe Objekte"""
-        try:
-            from decimal import Decimal
-            if isinstance(obj, Decimal):
-                return float(obj)
-            elif hasattr(obj, '__dict__'):
-                return str(obj)
-            return str(obj)
-        except:
-            return str(obj)
     
     def _parse_raw_mbus_frame(self, data):
         """Parst M-Bus Frame manuell (integriert aus mbus_frame_parser.py)"""
