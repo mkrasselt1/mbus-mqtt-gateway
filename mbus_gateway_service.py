@@ -148,7 +148,12 @@ class MBusGatewayService:
             self.mqtt_client.loop_start()
             
             # Home Assistant MQTT Interface
-            self.ha_mqtt = HomeAssistantMQTT(self.mqtt_client, self.config.data["mqtt_topic"])
+            # Discovery-Topics müssen "homeassistant" verwenden, State-Topics verwenden config
+            self.ha_mqtt = HomeAssistantMQTT(
+                self.mqtt_client, 
+                state_topic_prefix=self.config.data["mqtt_topic"],  # "mbus" für Messwerte
+                discovery_topic_prefix="homeassistant"  # Standard für Home Assistant Discovery
+            )
             
         except Exception as e:
             print(f"[ERROR] MQTT Setup fehlgeschlagen: {e}")
