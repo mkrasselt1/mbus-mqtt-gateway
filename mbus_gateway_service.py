@@ -312,8 +312,7 @@ class MBusGatewayService:
             "read",
             "--port", self.config.data["mbus_port"],
             "--baudrate", str(self.config.data["mbus_baudrate"]),
-            "--address", str(address),
-            "--timeout", "2.0"
+            "--address", str(address)
         ]
         
         response = self._run_cli_command(cli_args, timeout=15)
