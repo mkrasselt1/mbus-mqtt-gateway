@@ -46,8 +46,15 @@ class MBusGatewayService:
         self.running = True
         self.devices = {}  # address -> device_info
         self.last_discovery = None
-        self.discovery_interval = self.config.data.get('discovery_interval_minutes', 15) * 60
-        self.read_interval = self.config.data.get('reading_interval_minutes', 1) * 60
+        # Interval-Konfiguration (unterstützt Dezimalwerte für halbe Minuten)
+        discovery_minutes = self.config.data.get('discovery_interval_minutes', 15)
+        reading_minutes = self.config.data.get('reading_interval_minutes', 1)
+        
+        self.discovery_interval = discovery_minutes * 60  # Minuten in Sekunden
+        self.read_interval = reading_minutes * 60  # Minuten in Sekunden
+        
+        print(f"[CONFIG] Discovery-Intervall: {discovery_minutes} Minuten ({self.discovery_interval} Sekunden)")
+        print(f"[CONFIG] Reading-Intervall: {reading_minutes} Minuten ({self.read_interval} Sekunden)")
         
         # Lade bekannte Geräte aus Config sofort
         self._load_known_devices_from_config()

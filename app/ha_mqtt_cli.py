@@ -101,49 +101,67 @@ class HomeAssistantMQTT:
             print(f"[HA-MQTT] Publish Fehler für Gerät {address}: {e}")
     
     def _map_record_to_topic(self, record: Dict[str, Any], index: int) -> Optional[str]:
-        """Mappt CLI V2 Records zu Home Assistant Topics"""
+        """Mappt CLI V2 Records zu Home Assistant Topics mit verbesserter Erkennung"""
         value = record.get("value")
-        unit = record.get("unit", "").lower()
+        unit = record.get("unit", "").lower().strip()
         function_field = record.get("function_field", "").lower()
         
-        # Unit-basiertes Mapping (prioritär)
-        if "kwh" in unit or "wh" in unit:
-            return "energy"
-        elif "w" == unit or "kw" in unit:
-            return "power"  
-        elif "v" == unit or "volt" in unit:
-            return "voltage"
-        elif "a" == unit or "amp" in unit:
-            return "current"
+        print(f"[HA-MQTT] Record {index} Mapping: Unit='{unit}', Function='{function_field}', Value={value}")
         
-        # Function-Field basiertes Mapping
-        if "energy" in function_field:
+        # Präzise Unit-basierte Erkennung (höchste Priorität)
+        if unit in ["kwh", "wh", "mwh"]:  # Energie-Einheiten
             return "energy"
-        elif "power" in function_field:
+        elif unit in ["w", "kw", "mw"]:  # Leistungs-Einheiten  
             return "power"
-        elif "voltage" in function_field:
+        elif unit in ["v", "volt", "kv"]:  # Spannungs-Einheiten
             return "voltage"
-        elif "current" in function_field:
+        elif unit in ["a", "ma", "ka", "amp", "ampere"]:  # Strom-Einheiten
             return "current"
         
-        # Value-basiertes Mapping (Heuristik)
-        if isinstance(value, (int, float)):
-            if value > 1000:  # Wahrscheinlich Energie in Wh
+        # Function-Field basierte Erkennung (zweite Priorität)
+        if "energy" in function_field or "work" in function_field:
+            return "energy"
+        elif "power" in function_field or "leistung" in function_field:
+            return "power"
+        elif "voltage" in function_field or "spannung" in function_field:
+            return "voltage"
+        elif "current" in function_field or "strom" in function_field:
+            return "current"
+        
+        # Erweiterte Value-basierte Heuristik mit besserer Logik
+        if isinstance(value, (int, float)) and value > 0:
+            # Energie: Normalerweise große Werte (> 1000) 
+            if value > 1000:
+                print(f"[HA-MQTT] Record {index}: Hoher Wert ({value}) -> vermutlich Energy")
                 return "energy"
-            elif value > 100:  # Wahrscheinlich Spannung in V
+            
+            # Spannung: Typisch 230V für EU, 120V für US (100-400V Range)  
+            elif 100 <= value <= 400:
+                print(f"[HA-MQTT] Record {index}: Spannungsbereich ({value}V) -> Voltage")
                 return "voltage"
-            elif value < 50 and value > 0:  # Wahrscheinlich Strom in A oder Leistung in W
-                if value < 10:
-                    return "current"
-                else:
-                    return "power"
+            
+            # Strom: Normalerweise niedrige Werte (0.1-50A für Haushalte)
+            elif 0.1 <= value <= 50:
+                print(f"[HA-MQTT] Record {index}: Strombereich ({value}A) -> Current")
+                return "current"
+            
+            # Leistung: Mittlere Werte (1-10000W für Haushalte)
+            elif 1 <= value <= 10000:
+                print(f"[HA-MQTT] Record {index}: Leistungsbereich ({value}W) -> Power")
+                return "power"
         
-        # Fallback: Index-basiert
-        topic_map = {0: "energy", 1: "power", 2: "voltage", 3: "current"}
-        topic = topic_map.get(index, f"sensor_{index}")
+        # Intelligenter Fallback basierend auf typischen M-Bus Reihenfolgen
+        # Landis+Gyr und ähnliche Zähler: Energy, Power, Voltage, Current
+        fallback_map = {
+            0: "energy",    # Erste Messung: Meist Energiezählerstand
+            1: "power",     # Zweite Messung: Aktuelle Leistung  
+            2: "voltage",   # Dritte Messung: Spannung
+            3: "current"    # Vierte Messung: Strom
+        }
         
-        print(f"[HA-MQTT] Record {index} unbekannt - verwende Fallback '{topic}' (Unit: {unit}, Value: {value})")
-        return topic
+        fallback_topic = fallback_map.get(index, f"sensor_{index}")
+        print(f"[HA-MQTT] Record {index} unbekannt - verwende intelligenten Fallback '{fallback_topic}' (Unit: '{unit}', Function: '{function_field}', Value: {value})")
+        return fallback_topic
     
     def _send_dynamic_discovery_for_records(self, address: int, device_id: str, records: list, cli_response: dict):
         """Sendet dynamische Home Assistant Discovery basierend auf CLI V2 Records"""
