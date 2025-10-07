@@ -18,6 +18,19 @@ except ImportError:
     sys.exit(1)
 
 
+def convert_to_json_safe(value):
+    """Konvertiert Werte zu JSON-sicheren Typen"""
+    try:
+        from decimal import Decimal
+        if isinstance(value, Decimal):
+            return float(value)
+        elif hasattr(value, '__dict__'):
+            return str(value)
+        return value
+    except:
+        return str(value) if value is not None else None
+
+
 class MBusCLI_V2:
     """M-Bus CLI mit direkter meterbus Library Integration"""
     
@@ -367,7 +380,7 @@ class MBusCLI_V2:
             
             for record in frame.records:
                 record_data = {
-                    "value": self._convert_to_json_safe(getattr(record, 'parsed_value', None)),
+                    "value": convert_to_json_safe(getattr(record, 'parsed_value', None)),
                     "unit": getattr(record, 'unit', None),
                     "function_field": getattr(record, 'function_field', None),
                     "storage_number": getattr(record, 'storage_number', None),
