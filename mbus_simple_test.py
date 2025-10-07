@@ -43,9 +43,9 @@ def test_basic_communication(port, baudrate=9600):
         print(f"[ERROR] Kommunikationstest fehlgeschlagen: {e}")
         return False
 
-def test_mbus_addresses(port, baudrate=9600):
-    """Testet M-Bus Adressen 0-10 mit detailliertem Logging"""
-    print(f"[SCAN] Teste M-Bus Adressen 0-10 auf {port}")
+def test_mbus_addresses(port, baudrate=9600, max_address=255):
+    """Testet M-Bus Adressen 0-max_address mit detailliertem Logging"""
+    print(f"[SCAN] Teste M-Bus Adressen 0-{max_address} auf {port}")
     
     found_devices = []
     
@@ -53,8 +53,11 @@ def test_mbus_addresses(port, baudrate=9600):
         with serial.Serial(port, baudrate, parity='E', stopbits=1, timeout=1.0) as ser:
             print(f"[SCAN] M-Bus Port geöffnet: {ser.name}")
             
-            for addr in range(0, 11):
-                print(f"\n[SCAN] Teste Adresse {addr}...")
+            for addr in range(0, max_address + 1):
+                if addr % 10 == 0:  # Progress Update alle 10 Adressen
+                    print(f"\n[PROGRESS] Teste Adressen {addr}-{min(addr+9, max_address)}...")
+                
+                print(f"[SCAN] Teste Adresse {addr}...", end='', flush=True)
                 
                 # Buffer leeren
                 ser.reset_input_buffer()
@@ -63,17 +66,14 @@ def test_mbus_addresses(port, baudrate=9600):
                 checksum = (0x5B + addr) % 256
                 frame = bytes([0x10, 0x5B, addr, checksum, 0x16])
                 
-                print(f"[SCAN] Sende REQ_UD2: {frame.hex()}")
                 ser.write(frame)
-                
-                time.sleep(0.3)
+                time.sleep(0.1)  # Kürzere Wartezeit für schnelleren Scan
                 
                 available = ser.in_waiting
-                print(f"[SCAN] Verfügbare Bytes: {available}")
                 
                 if available > 0:
                     response = ser.read(available)
-                    print(f"[FOUND] Adresse {addr}: {len(response)} bytes")
+                    print(f" ✅ GEFUNDEN: {len(response)} bytes")
                     print(f"[FOUND] Response: {response.hex()}")
                     
                     found_devices.append({
@@ -82,10 +82,10 @@ def test_mbus_addresses(port, baudrate=9600):
                         "response": response.hex()
                     })
                 else:
-                    print(f"[SCAN] Adresse {addr}: Keine Antwort")
+                    print(" ❌")
                     
     except Exception as e:
-        print(f"[ERROR] Scan fehlgeschlagen: {e}")
+        print(f"\n[ERROR] Scan fehlgeschlagen: {e}")
     
     print(f"\n[RESULT] Scan abgeschlossen: {len(found_devices)} Geräte gefunden")
     for device in found_devices:
@@ -132,6 +132,8 @@ def main():
     parser.add_argument('-b', '--baudrate', type=int, default=9600, help='Baudrate')
     parser.add_argument('--test', choices=['basic', 'scan', 'meterbus', 'all'], 
                        default='all', help='Test-Modus')
+    parser.add_argument('--max-address', type=int, default=10, 
+                       help='Maximale Primäradresse für Scan (Standard: 10, Max: 255)')
     
     args = parser.parse_args()
     
@@ -139,6 +141,7 @@ def main():
     print(f"Port: {args.port}")
     print(f"Baudrate: {args.baudrate}")
     print(f"Test: {args.test}")
+    print(f"Max-Address: {args.max_address}")
     print("-" * 50)
     
     if args.test in ['basic', 'all']:
@@ -147,7 +150,7 @@ def main():
     
     if args.test in ['scan', 'all']:
         print("\n=== M-BUS ADDRESS SCAN ===")
-        test_mbus_addresses(args.port, args.baudrate)
+        test_mbus_addresses(args.port, args.baudrate, args.max_address)
     
     if args.test in ['meterbus', 'all']:
         print("\n=== METERBUS LIBRARY TEST ===")

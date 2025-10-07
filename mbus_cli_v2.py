@@ -95,8 +95,11 @@ class MBusCLI_V2:
                 devices.extend(self.found_devices)
                 
                 # 3. Zusätzlich: Primäradresse-Test
-                print("[DEBUG] Teste Primäradressen 0-10...", file=sys.stderr)
-                for addr in range(0, 11):
+                print("[DEBUG] Teste Primäradressen 0-255...", file=sys.stderr)
+                for addr in range(0, 256):
+                    if addr % 50 == 0:  # Progress alle 50 Adressen
+                        print(f"[PROGRESS] Teste Adressen {addr}-{min(addr+49, 255)}...", file=sys.stderr)
+                    
                     if self._ping_address_meterbus(ser, addr):
                         device_info = {
                             "address": addr,

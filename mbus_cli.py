@@ -96,11 +96,13 @@ class MBusCLI:
                 time.sleep(0.1)
                 
                 # 4. Teste zuerst einfachen Primäradresse-Scan als Baseline
-                print("[DEBUG] Teste zuerst Primäradressen 0-10 als Baseline...", file=sys.stderr)
+                print("[DEBUG] Teste Primäradressen 0-255 als Baseline...", file=sys.stderr)
                 primary_found = 0
-                for address in range(0, 11):
+                for address in range(0, 256):
+                    if address % 50 == 0:  # Progress alle 50 Adressen
+                        print(f"[PROGRESS] Teste Adressen {address}-{min(address+49, 255)}...", file=sys.stderr)
+                    
                     try:
-                        print(f"[DEBUG] Teste Primäradresse {address}...", file=sys.stderr)
                         response_data = self._test_primary_address(ser, address)
                         if response_data and len(response_data) > 1:
                             primary_found += 1
@@ -115,10 +117,9 @@ class MBusCLI:
                                 "found_at": datetime.now().isoformat()
                             }
                             devices.append(device_info)
-                        else:
-                            print(f"[DEBUG] Primäradresse {address}: keine Antwort", file=sys.stderr)
                     except Exception as e:
-                        print(f"[DEBUG] Primäradresse {address} Fehler: {e}", file=sys.stderr)
+                        if address < 10:  # Nur für erste 10 Adressen detailliertes Logging
+                            print(f"[DEBUG] Primäradresse {address} Fehler: {e}", file=sys.stderr)
                         continue
                 
                 print(f"[DEBUG] Primäradresse-Scan abgeschlossen: {primary_found} Geräte gefunden", file=sys.stderr)
@@ -521,9 +522,13 @@ class MBusCLI:
         return None
     
     def _test_primary_address(self, ser, address):
-        """Testet Primäradresse mit verbessertem Debugging"""
+        """Testet Primäradresse mit optimierter Geschwindigkeit"""
         try:
-            print(f"[DEBUG] Teste Primäradresse {address}: Sende REQ_UD2...", file=sys.stderr)
+            # Für höhere Adressen weniger Debug-Output
+            verbose = address < 10
+            
+            if verbose:
+                print(f"[DEBUG] Teste Primäradresse {address}: Sende REQ_UD2...", file=sys.stderr)
             
             # Leere Buffer vor Request
             ser.reset_input_buffer()
@@ -532,24 +537,28 @@ class MBusCLI:
             checksum = (0x5B + address) % 256
             frame = bytes([0x10, 0x5B, address, checksum, 0x16])
             
-            print(f"[DEBUG] Sende Frame: {frame.hex()}", file=sys.stderr)
+            if verbose:
+                print(f"[DEBUG] Sende Frame: {frame.hex()}", file=sys.stderr)
+            
             ser.write(frame)
-            time.sleep(0.3)  # Längere Wartezeit
+            time.sleep(0.1)  # Kürzere Wartezeit für Effizienz
             
             # Response lesen
             available = ser.in_waiting
-            print(f"[DEBUG] Bytes verfügbar: {available}", file=sys.stderr)
             
             if available > 0:
                 response = ser.read(available)
-                print(f"[DEBUG] Response erhalten: {len(response)} bytes: {response.hex()}", file=sys.stderr)
+                if verbose:
+                    print(f"[DEBUG] Response erhalten: {len(response)} bytes: {response.hex()}", file=sys.stderr)
                 return response
-            else:
+            elif verbose:
                 print(f"[DEBUG] Keine Antwort von Adresse {address}", file=sys.stderr)
-                return None
+                
+            return None
                 
         except Exception as e:
-            print(f"[ERROR] Fehler bei Primäradresse {address}: {e}", file=sys.stderr)
+            if address < 10:  # Nur für erste 10 Adressen detaillierte Fehler
+                print(f"[ERROR] Fehler bei Primäradresse {address}: {e}", file=sys.stderr)
             return None
 
 
