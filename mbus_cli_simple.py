@@ -103,9 +103,16 @@ def extract_frame_data(frame):
         # Records extrahieren - genau wie im pyMeterBus Beispiel
         recs = []
         for rec in frame.records:
+            # Einheit behandeln - wenn None oder leer, dann leer lassen
+            unit = rec.unit
+            if unit is None:
+                unit = ""
+            else:
+                unit = str(unit)
+            
             recs.append({
                 'value': rec.value,
-                'unit': rec.unit
+                'unit': unit
             })
         
         # Frame-Daten - genau wie im pyMeterBus Beispiel

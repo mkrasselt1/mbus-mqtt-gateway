@@ -293,16 +293,9 @@ class HomeAssistantMQTT:
     def _normalize_unit_for_home_assistant(self, unit: str, topic_name: str) -> str:
         """Normalisiert Units für Home Assistant Kompatibilität"""
         if not unit or unit.strip() == "":
-            # Fallback Units basierend auf Topic-Type
-            fallback_units = {
-                "energy": "kWh",
-                "power": "W", 
-                "voltage": "V",
-                "current": "A"
-            }
-            fallback_unit = fallback_units.get(topic_name, "")
-            print(f"[HA-MQTT] Leere Unit für {topic_name} -> Fallback: '{fallback_unit}'")
-            return fallback_unit
+            # Keine automatischen Fallback-Units - leere Einheiten bleiben leer
+            print(f"[HA-MQTT] Leere Unit für {topic_name} -> bleibt leer")
+            return ""
         
         # Home Assistant Standard-Units (offiziell unterstützt)
         unit_normalization = {

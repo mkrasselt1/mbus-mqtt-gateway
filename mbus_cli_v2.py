@@ -405,9 +405,16 @@ class MBusCLI_V2:
             data_records = []
             
             for record in frame.records:
+                # Einheit behandeln - wenn None, dann leer lassen
+                unit = getattr(record, 'unit', None)
+                if unit is None:
+                    unit = ""
+                else:
+                    unit = str(unit)
+                
                 record_data = {
                     "value": convert_to_json_safe(getattr(record, 'parsed_value', None)),
-                    "unit": getattr(record, 'unit', None),
+                    "unit": unit,
                     "function_field": getattr(record, 'function_field', None),
                     "storage_number": getattr(record, 'storage_number', None),
                     "tariff": getattr(record, 'tariff', None),
