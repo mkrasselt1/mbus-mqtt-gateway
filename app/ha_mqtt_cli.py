@@ -210,6 +210,9 @@ class HomeAssistantMQTT:
                         state_class = self._get_state_class_from_topic(topic_name)
                         icon = self._get_icon_from_topic(topic_name)
                         
+                        # Unit normalisieren für Home Assistant Kompatibilität
+                        normalized_unit = self._normalize_unit_for_home_assistant(unit, topic_name)
+                        
                         # Sensor-Konfiguration mit eindeutiger ID pro Record
                         unique_sensor_id = f"mbus_{device_id}_{topic_name}_{i}"  # Index hinzufügen für Eindeutigkeit
                         state_topic = f"{self.state_topic_prefix}/sensor/mbus_{device_id}/{topic_name}_{i}/state"
@@ -219,7 +222,7 @@ class HomeAssistantMQTT:
                             "name": f"M-Bus {identification} {sensor_name} {i}",  # Index auch im Namen für Klarheit
                             "unique_id": unique_sensor_id,
                             "state_topic": state_topic,
-                            "unit_of_measurement": unit,
+                            "unit_of_measurement": normalized_unit,
                             "icon": icon
                         }
                         
@@ -237,7 +240,7 @@ class HomeAssistantMQTT:
                             retain=True
                         )
                         
-                        print(f"[HA-MQTT] Discovery gesendet: {sensor_name} ({unit}) -> {discovery_topic}")
+                        print(f"[HA-MQTT] Discovery gesendet: {sensor_name} ({normalized_unit}) -> {discovery_topic}")
             
             # Gerät als verfügbar markieren
             availability_topic = f"{self.state_topic_prefix}/sensor/mbus_{device_id}/availability"
@@ -286,6 +289,80 @@ class HomeAssistantMQTT:
             "current": "mdi:current-ac"
         }
         return icon_map.get(topic_name, "mdi:gauge")
+    
+    def _normalize_unit_for_home_assistant(self, unit: str, topic_name: str) -> str:
+        """Normalisiert Units für Home Assistant Kompatibilität"""
+        if not unit or unit.strip() == "":
+            # Fallback Units basierend auf Topic-Type
+            fallback_units = {
+                "energy": "kWh",
+                "power": "W", 
+                "voltage": "V",
+                "current": "A"
+            }
+            fallback_unit = fallback_units.get(topic_name, "")
+            print(f"[HA-MQTT] Leere Unit für {topic_name} -> Fallback: '{fallback_unit}'")
+            return fallback_unit
+        
+        # Home Assistant Standard-Units (offiziell unterstützt)
+        unit_normalization = {
+            # Energie
+            "kwh": "kWh",
+            "wh": "Wh", 
+            "mwh": "MWh",
+            "j": "J",
+            "kj": "kJ",
+            "mj": "MJ",
+            
+            # Leistung
+            "w": "W",
+            "kw": "kW",
+            "mw": "MW",
+            "watt": "W",
+            "watts": "W",
+            "kilowatt": "kW",
+            "hp": "hp",
+            "va": "VA",
+            "kva": "kVA",
+            
+            # Spannung
+            "v": "V",
+            "kv": "kV",
+            "mv": "mV",
+            "volt": "V",
+            "volts": "V",
+            
+            # Strom
+            "a": "A",
+            "ma": "mA",
+            "ka": "kA", 
+            "amp": "A",
+            "amps": "A",
+            "ampere": "A",
+            "amperes": "A",
+            
+            # Frequenz
+            "hz": "Hz",
+            "khz": "kHz",
+            "mhz": "MHz",
+            "hertz": "Hz",
+            
+            # Temperatur
+            "°c": "°C",
+            "°f": "°F",
+            "k": "K",
+            "celsius": "°C",
+            "fahrenheit": "°F",
+            "kelvin": "K"
+        }
+        
+        unit_lower = unit.lower().strip()
+        normalized = unit_normalization.get(unit_lower, unit)
+        
+        if normalized != unit:
+            print(f"[HA-MQTT] Unit normalisiert: '{unit}' -> '{normalized}'")
+        
+        return normalized
     
     def publish_gateway_status(self, status: str):
         """Publiziert Gateway-Status"""
