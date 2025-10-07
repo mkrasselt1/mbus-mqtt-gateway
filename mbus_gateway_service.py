@@ -78,6 +78,9 @@ class MBusGatewayService:
         self.reading_thread = None
         self.shutdown_event = threading.Event()
         
+        # M-Bus Bus Lock (verhindert gleichzeitige CLI Aufrufe)
+        self.mbus_lock = threading.Lock()
+        
         # Signal Handler
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -179,34 +182,40 @@ class MBusGatewayService:
                 use_cli_v2 = self.config.data.get('use_cli_v2', True)
                 cli_tool = "mbus_cli_v2.py" if use_cli_v2 else "mbus_cli.py"
             
-            # Vollständiges Kommando zusammenbauen mit spezifischem CLI Tool
-            full_command = ["python3", cli_tool] + command_args
-            
-            print(f"[CLI] Führe aus: {' '.join(full_command)}")
-            
-            # Prozess starten
-            result = subprocess.run(
-                full_command,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=os.path.dirname(os.path.abspath(__file__))  # Working Directory
-            )
-            
-            # Exit Code prüfen
-            if result.returncode != 0:
-                print(f"[CLI] Fehler - Exit Code: {result.returncode}")
-                print(f"[CLI] STDERR: {result.stderr}")
-                return None
-            
-            # JSON parsen
-            try:
-                response = json.loads(result.stdout)
-                return response
-            except json.JSONDecodeError as e:
-                print(f"[CLI] JSON Parse Fehler: {e}")
-                print(f"[CLI] STDOUT: {result.stdout}")
-                return None
+            # M-Bus Lock acquired - verhindert gleichzeitige Bus-Zugriffe
+            print(f"[CLI] Warte auf M-Bus Lock...")
+            with self.mbus_lock:
+                print(f"[CLI] M-Bus Lock erhalten")
+                # Vollständiges Kommando zusammenbauen mit spezifischem CLI Tool
+                full_command = ["python3", cli_tool] + command_args
+                
+                print(f"[CLI] Führe aus: {' '.join(full_command)}")
+                
+                # Prozess starten
+                result = subprocess.run(
+                    full_command,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    cwd=os.path.dirname(os.path.abspath(__file__))  # Working Directory
+                )
+                
+                print(f"[CLI] M-Bus Lock freigegeben")
+                
+                # Exit Code prüfen
+                if result.returncode != 0:
+                    print(f"[CLI] Fehler - Exit Code: {result.returncode}")
+                    print(f"[CLI] STDERR: {result.stderr}")
+                    return None
+                
+                # JSON parsen
+                try:
+                    response = json.loads(result.stdout)
+                    return response
+                except json.JSONDecodeError as e:
+                    print(f"[CLI] JSON Parse Fehler: {e}")
+                    print(f"[CLI] STDOUT: {result.stdout}")
+                    return None
                 
         except subprocess.TimeoutExpired:
             print(f"[CLI] Timeout nach {timeout} Sekunden")
