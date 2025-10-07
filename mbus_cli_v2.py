@@ -19,11 +19,37 @@ except ImportError:
 
 
 def convert_to_json_safe(value):
-    """Konvertiert Werte zu JSON-sicheren Typen"""
+    """Konvertiert Werte zu JSON-sicheren Typen mit Plausibilitätsprüfung"""
     try:
         from decimal import Decimal
         if isinstance(value, Decimal):
-            return float(value)
+            float_value = float(value)
+            # Plausibilitätsprüfung für Energy/Power Messwerte
+            if float_value > 1_000_000:  # > 1 Million
+                print(f"[WARNING] Unplausibler Wert {float_value} - möglicherweise falsche Skalierung", file=sys.stderr)
+                # Versuche verschiedene Skalierungen
+                if float_value > 1_000_000_000:  # > 1 Milliarde
+                    scaled = float_value / 1_000_000  # Divide by million
+                    print(f"[WARNING] Skaliere Wert {float_value} -> {scaled} (÷1,000,000)", file=sys.stderr)
+                    return scaled
+                elif float_value > 1_000_000:  # > 1 Million
+                    scaled = float_value / 1_000  # Divide by thousand
+                    print(f"[WARNING] Skaliere Wert {float_value} -> {scaled} (÷1,000)", file=sys.stderr)
+                    return scaled
+            return float_value
+        elif isinstance(value, (int, float)):
+            # Plausibilitätsprüfung für numerische Werte
+            if value > 1_000_000:  # > 1 Million
+                print(f"[WARNING] Unplausibler Wert {value} - möglicherweise falsche Skalierung", file=sys.stderr)
+                if value > 1_000_000_000:  # > 1 Milliarde
+                    scaled = value / 1_000_000  # Divide by million
+                    print(f"[WARNING] Skaliere Wert {value} -> {scaled} (÷1,000,000)", file=sys.stderr)
+                    return scaled
+                elif value > 1_000_000:  # > 1 Million
+                    scaled = value / 1_000  # Divide by thousand
+                    print(f"[WARNING] Skaliere Wert {value} -> {scaled} (÷1,000)", file=sys.stderr)
+                    return scaled
+            return value
         elif hasattr(value, '__dict__'):
             return str(value)
         return value
@@ -512,8 +538,17 @@ class MBusCLI_V2:
                     record["raw_data"] = value_bytes.hex().upper()
                     
                     if data_length <= 4:
-                        value = int.from_bytes(value_bytes, byteorder='little')
-                        record["value"] = value
+                        raw_value = int.from_bytes(value_bytes, byteorder='little')
+                        
+                        # VIF-basierte Skalierung anwenden
+                        scaled_value, unit = self._apply_vif_scaling(raw_value, vif)
+                        record["value"] = scaled_value
+                        record["unit"] = unit
+                        record["raw_value"] = raw_value  # Für Debug-Zwecke
+                        
+                        # Zusätzliche Plausibilitätsprüfung
+                        if scaled_value > 100_000:  # Sehr hoher Wert
+                            print(f"[WARNING] Sehr hoher Wert nach VIF-Skalierung: {scaled_value} (Raw: {raw_value}, VIF: 0x{vif:02X})", file=sys.stderr)
                     
                     pos += data_length
                 else:
@@ -562,6 +597,81 @@ class MBusCLI_V2:
             0x17: "Dual Water"
         }
         return device_types.get(device_type, f"Typ_{device_type:02X}")
+    
+    def _apply_vif_scaling(self, raw_value, vif):
+        """Wendet VIF-basierte Skalierung auf Rohwerte an"""
+        try:
+            # VIF-basierte Skalierung und Unit-Zuordnung
+            # Basiert auf EN 13757-3 Standard
+            
+            if vif >= 0x00 and vif <= 0x07:  # Energy Wh (E000 0nnn)
+                # 0x00-0x07: Energy in Wh * 10^(nnn-3)
+                exponent = (vif & 0x07) - 3  # -3 bis +4
+                factor = 10 ** exponent
+                scaled = raw_value * factor
+                unit = "Wh" if exponent <= 0 else "kWh" if exponent <= 3 else "MWh"
+                return scaled, unit
+                
+            elif vif >= 0x08 and vif <= 0x0F:  # Energy J (E000 1nnn)
+                # 0x08-0x0F: Energy in J * 10^(nnn)
+                exponent = vif & 0x07  # 0 bis 7
+                factor = 10 ** exponent
+                scaled = raw_value * factor
+                unit = "J" if exponent <= 3 else "kJ" if exponent <= 6 else "MJ"
+                return scaled, unit
+                
+            elif vif >= 0x28 and vif <= 0x2F:  # Power W (E010 1nnn)
+                # 0x28-0x2F: Power in W * 10^(nnn-3)
+                exponent = (vif & 0x07) - 3  # -3 bis +4
+                factor = 10 ** exponent
+                scaled = raw_value * factor
+                unit = "W" if exponent <= 0 else "kW" if exponent <= 3 else "MW"
+                return scaled, unit
+                
+            elif vif >= 0x58 and vif <= 0x5F:  # Voltage V (E101 1nnn)
+                # 0x58-0x5F: Voltage in V * 10^(nnn-3)
+                exponent = (vif & 0x07) - 3  # -3 bis +4
+                factor = 10 ** exponent
+                scaled = raw_value * factor
+                unit = "V"
+                return scaled, unit
+                
+            elif vif >= 0x60 and vif <= 0x67:  # Current A (E110 0nnn)
+                # 0x60-0x67: Current in A * 10^(nnn-3) 
+                exponent = (vif & 0x07) - 3  # -3 bis +4
+                factor = 10 ** exponent
+                scaled = raw_value * factor
+                unit = "A"
+                return scaled, unit
+                
+            else:
+                # Unbekannter VIF - versuche intelligente Schätzung basierend auf Wertgröße
+                if raw_value > 1_000_000:
+                    # Sehr große Werte -> wahrscheinlich Energie in kleinsten Einheiten
+                    scaled = raw_value / 1000.0  # Annahme: von Wh zu kWh
+                    unit = "kWh"
+                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, große Zahl -> skaliere {raw_value} zu {scaled} kWh", file=sys.stderr)
+                elif raw_value > 10_000:
+                    # Mittlere Werte -> wahrscheinlich Leistung in kleinsten Einheiten  
+                    scaled = raw_value / 1.0  # Keine Skalierung
+                    unit = "W"
+                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, mittlere Zahl -> {scaled} W", file=sys.stderr)
+                elif raw_value > 100:
+                    # Kleinere Werte -> wahrscheinlich Spannung
+                    scaled = raw_value / 1.0
+                    unit = "V"
+                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, kleine Zahl -> {scaled} V", file=sys.stderr)
+                else:
+                    # Sehr kleine Werte -> wahrscheinlich Strom
+                    scaled = raw_value / 1.0
+                    unit = "A"
+                    print(f"[WARNING] Unbekannter VIF 0x{vif:02X}, sehr kleine Zahl -> {scaled} A", file=sys.stderr)
+                
+                return scaled, unit
+                
+        except Exception as e:
+            print(f"[ERROR] VIF-Skalierung fehlgeschlagen für VIF 0x{vif:02X}, Wert {raw_value}: {e}", file=sys.stderr)
+            return raw_value, ""
     
     def _decode_vif(self, vif):
         """Dekodiert Value Information Field"""
