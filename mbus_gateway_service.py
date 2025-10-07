@@ -358,7 +358,16 @@ class MBusGatewayService:
                     # Daten zu Home Assistant senden
                     self._publish_mqtt('publish_device_data', address, device_data)
                     
-                    print(f"[READ] Gerät {address}: ✅ {len(device_data.get('data', {}))} Messwerte")
+                    # Messwerte zählen (CLI V2 verwendet 'records' oder 'data')
+                    record_count = 0
+                    if 'records' in device_data:
+                        record_count = len(device_data['records'])
+                    elif 'data' in device_data:
+                        record_count = len(device_data['data'])
+                    elif device_data.get('record_count'):
+                        record_count = device_data['record_count']
+                    
+                    print(f"[READ] Gerät {address}: ✅ {record_count} Messwerte")
                 else:
                     print(f"[READ] Gerät {address}: ❌ Keine Daten")
                     
