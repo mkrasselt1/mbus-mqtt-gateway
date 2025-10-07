@@ -4,3 +4,4 @@ bin/
 lib/
 pyvenv.cfg
 lib64
+config.json
