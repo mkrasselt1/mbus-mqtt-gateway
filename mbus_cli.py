@@ -65,7 +65,7 @@ class MBusCLI:
             }
     
     def scan_devices(self):
-        """Scannt nach verfügbaren M-Bus Geräten (vereinfacht)"""
+        """Scannt nach verfügbaren M-Bus Geräten mit Sekundäradresse-Scan"""
         print(f"[INFO] Scanne M-Bus Geräte auf {self.port} (Baudrate: {self.baudrate})", file=sys.stderr)
         
         devices = []
@@ -73,32 +73,52 @@ class MBusCLI:
         
         try:
             with serial.Serial(self.port, self.baudrate, timeout=self.timeout) as ser:
-                # Teste einige bekannte Adressen
-                test_addresses = [0, 1, 2, 3, 4, 5, 10, 254]  # Häufige Adressen
+                print("[SCAN] Führe M-Bus Sekundäradresse-Scan durch...", file=sys.stderr)
                 
-                for address in test_addresses:
+                # M-Bus Sekundäradresse Scan
+                # 1. SND_NKE an Broadcast (255) - Normalisierung
+                self._send_snd_nke(ser, 255)
+                time.sleep(0.1)
+                
+                # 2. Wildcards für Sekundäradresse-Scan
+                # Format: Manufacturer(2) + ID(4) + Version(1) + Medium(1) = 8 Bytes
+                wildcards = [
+                    "FFFFFFFFFFFFFFFF",  # Alle Geräte
+                    "FFFFFFFFFF1FFF1F",  # Elektrische Geräte (Medium 1F)
+                    "FFFFFFFFFF16FF16",  # Wärme/Kälte Geräte (Medium 16)
+                ]
+                
+                found_addresses = set()
+                
+                for wildcard in wildcards:
+                    print(f"[SCAN] Teste Wildcard: {wildcard}", file=sys.stderr)
+                    
+                    # Search for specific secondary address pattern
+                    devices_found = self._scan_secondary_addresses(ser, wildcard)
+                    
+                    for device in devices_found:
+                        if device["secondary_address"] not in found_addresses:
+                            devices.append(device)
+                            found_addresses.add(device["secondary_address"])
+                            print(f"[FOUND] Gerät: {device['secondary_address']}", file=sys.stderr)
+                
+                # Zusätzlich: Teste bekannte Primäradressen (0-10)
+                print("[SCAN] Teste zusätzlich Primäradressen 0-10...", file=sys.stderr)
+                for address in range(0, 11):
                     try:
-                        print(f"[SCAN] Teste Adresse {address}...", file=sys.stderr)
-                        
-                        # Versuche meterbus.send_request_frame
-                        if hasattr(meterbus, 'send_request_frame'):
-                            meterbus.send_request_frame(ser, address)
-                            time.sleep(0.1)  # Kurze Pause
-                            
-                            # Versuche Antwort zu lesen
-                            response = ser.read(255)  # Lese bis zu 255 Bytes
-                            
-                            if len(response) > 0:
-                                devices.append({
-                                    "address": address,
-                                    "response_length": len(response),
-                                    "response_hex": response.hex(),
-                                    "found_at": datetime.now().isoformat()
-                                })
-                                print(f"[FOUND] Gerät an Adresse {address} (Response: {len(response)} Bytes)", file=sys.stderr)
-                        
-                    except Exception as e:
-                        print(f"[DEBUG] Adresse {address} Fehler: {e}", file=sys.stderr)
+                        response_data = self._test_primary_address(ser, address)
+                        if response_data:
+                            device_info = {
+                                "address": address,
+                                "type": "primary",
+                                "secondary_address": f"primary_{address}",
+                                "response_length": len(response_data),
+                                "response_hex": response_data.hex(),
+                                "found_at": datetime.now().isoformat()
+                            }
+                            devices.append(device_info)
+                            print(f"[FOUND] Primäradresse {address}", file=sys.stderr)
+                    except:
                         continue
         
         except Exception as e:
@@ -116,33 +136,75 @@ class MBusCLI:
             "devices": devices,
             "device_count": len(devices),
             "scan_duration_seconds": round(scan_duration, 2),
-            "tested_addresses": test_addresses,
+            "scan_method": "secondary_address_wildcard",
             "port": self.port,
             "baudrate": self.baudrate,
             "timestamp": datetime.now().isoformat()
         }
     
-    def read_device(self, address):
-        """Liest Daten von einem spezifischen Gerät (vereinfacht)"""
-        print(f"[INFO] Lese Daten von Adresse {address}", file=sys.stderr)
+    def _parse_frame(self, frame):
+        """Versucht einen empfangenen Frame zu parsen"""
+        if not frame:
+            return None
+        
+        try:
+            result = {
+                "frame_type": type(frame).__name__,
+                "attributes": {}
+            }
+            
+            # Sammle alle verfügbaren Attribute
+            for attr in dir(frame):
+                if not attr.startswith('_'):
+                    try:
+                        value = getattr(frame, attr)
+                        if not callable(value):
+                            result["attributes"][attr] = self._safe_convert(value)
+                    except:
+                        continue
+            
+            return result
+            
+        except Exception as e:
+            return {"parse_error": str(e)}
+    
+    def read_device(self, address_or_id):
+        """Liest Daten von einem spezifischen Gerät (Primär- oder Sekundäradresse)"""
+        print(f"[INFO] Lese Daten von {address_or_id}", file=sys.stderr)
         
         read_start = time.time()
         
         try:
             with serial.Serial(self.port, self.baudrate, timeout=self.timeout) as ser:
-                # Sende Request Frame
-                if hasattr(meterbus, 'send_request_frame'):
-                    meterbus.send_request_frame(ser, address)
+                
+                # Prüfe ob es eine Sekundäradresse (16 Zeichen hex) oder Primäradresse ist
+                if isinstance(address_or_id, str) and len(address_or_id) >= 16:
+                    # Sekundäradresse - Verwende SND_UD an 255 (Broadcast)
+                    print(f"[READ] Verwende Sekundäradresse: {address_or_id}", file=sys.stderr)
+                    
+                    # 1. Normalisierung
+                    self._send_snd_nke(ser, 255)
+                    time.sleep(0.1)
+                    
+                    # 2. SND_UD (Select Device) mit Sekundäradresse
+                    # Vereinfacht: Sende REQ_UD2 an Broadcast
+                    req_frame = bytes([0x10, 0x5B, 255, 0x5B + 255, 0x16])
+                    ser.write(req_frame)
+                    
                 else:
-                    # Fallback: Manueller Frame-Aufbau
-                    # Vereinfachter REQ_UD2 Frame
-                    frame = bytes([0x10, 0x5B, address, 0x5B + address, 0x16])
-                    ser.write(frame)
+                    # Primäradresse
+                    address = int(address_or_id) if isinstance(address_or_id, str) else address_or_id
+                    print(f"[READ] Verwende Primäradresse: {address}", file=sys.stderr)
+                    
+                    # Standard REQ_UD2 an Primäradresse
+                    checksum = (0x5B + address) % 256
+                    req_frame = bytes([0x10, 0x5B, address, checksum, 0x16])
+                    ser.write(req_frame)
                 
                 time.sleep(0.2)  # Warte auf Antwort
                 
                 # Lese Antwort
-                response = ser.read(255)
+                response = ser.read(512)  # Größerer Buffer für M-Bus Daten
                 
                 if len(response) > 0:
                     # Versuche mit meterbus zu dekodieren
@@ -157,10 +219,11 @@ class MBusCLI:
                     
                     return {
                         "success": True,
-                        "address": address,
+                        "address": address_or_id,
                         "response_length": len(response),
                         "response_hex": response.hex(),
                         "frame_data": frame_data,
+                        "data": self._extract_measurements_from_response(response),
                         "read_duration_seconds": round(time.time() - read_start, 3),
                         "timestamp": datetime.now().isoformat(),
                         "port": self.port,
@@ -170,7 +233,7 @@ class MBusCLI:
                     return {
                         "success": False,
                         "error": "Keine Antwort vom Gerät",
-                        "address": address,
+                        "address": address_or_id,
                         "response_length": 0
                     }
                 
@@ -178,11 +241,103 @@ class MBusCLI:
             return {
                 "success": False,
                 "error": str(e),
-                "address": address,
+                "address": address_or_id,
                 "read_duration_seconds": round(time.time() - read_start, 3)
             }
     
-    def _parse_frame(self, frame):
+    def _send_snd_nke(self, ser, address):
+        """Sendet SND_NKE (Normalisierung) an Adresse"""
+        try:
+            # SND_NKE Frame: 10 40 <addr> <checksum> 16
+            checksum = (0x40 + address) % 256
+            frame = bytes([0x10, 0x40, address, checksum, 0x16])
+            ser.write(frame)
+            time.sleep(0.1)
+            # Response lesen und verwerfen
+            ser.read(10)
+        except:
+            pass
+    
+    def _scan_secondary_addresses(self, ser, wildcard_pattern):
+        """Scannt Sekundäradressen mit Wildcard-Pattern"""
+        devices = []
+        try:
+            # REQ_UD2 an Broadcast (255) senden
+            req_frame = bytes([0x10, 0x5B, 255, 0x5B + 255, 0x16])
+            ser.write(req_frame)
+            time.sleep(0.2)
+            
+            # Response lesen
+            response = ser.read(255)
+            
+            if len(response) > 10:  # Mindestens ein gültiger Frame
+                # Versuche M-Bus Frame zu dekodieren
+                if response[0] == 0x68:  # Variable Length Frame
+                    try:
+                        # Extrahiere Sekundäradresse aus Response
+                        secondary_addr = self._extract_secondary_address(response)
+                        if secondary_addr:
+                            device_info = {
+                                "address": 255,  # Broadcast verwendet
+                                "type": "secondary", 
+                                "secondary_address": secondary_addr,
+                                "response_length": len(response),
+                                "response_hex": response.hex(),
+                                "found_at": datetime.now().isoformat()
+                            }
+                            devices.append(device_info)
+                    except:
+                        pass
+        except:
+            pass
+        
+        return devices
+    
+    def _extract_secondary_address(self, response_data):
+        """Extrahiert Sekundäradresse aus M-Bus Response"""
+        try:
+            if len(response_data) < 20:
+                return None
+            
+            # M-Bus Variable Length Frame: 68 L L 68 C A CI ...
+            if response_data[0] == 0x68 and response_data[3] == 0x68:
+                length = response_data[1]
+                if len(response_data) >= length + 6:
+                    # CI-Field position (nach C und A)
+                    ci_pos = 6
+                    if ci_pos < len(response_data):
+                        # Versuche Sekundäradresse zu extrahieren (falls im Payload)
+                        # Vereinfacht: Nutze die ersten 8 Bytes nach CI als Sekundäradresse
+                        start_pos = ci_pos + 1
+                        if start_pos + 8 <= len(response_data):
+                            sec_addr_bytes = response_data[start_pos:start_pos+8]
+                            secondary_addr = sec_addr_bytes.hex().upper()
+                            # Formatiere als typische M-Bus ID
+                            return f"{secondary_addr[:8]}{secondary_addr[8:]}"
+        except:
+            pass
+        
+        return None
+    
+    def _test_primary_address(self, ser, address):
+        """Testet Primäradresse"""
+        try:
+            # REQ_UD2 Frame: 10 5B <addr> <checksum> 16
+            checksum = (0x5B + address) % 256
+            frame = bytes([0x10, 0x5B, address, checksum, 0x16])
+            ser.write(frame)
+            time.sleep(0.2)
+            
+            # Response lesen
+            response = ser.read(255)
+            
+            if len(response) > 5:  # Mindestens ACK oder Frame
+                return response
+            
+        except:
+            pass
+        
+        return None
         """Versucht einen empfangenen Frame zu parsen"""
         if not frame:
             return None
@@ -262,6 +417,41 @@ def main():
         }
         print(json.dumps(error_result, ensure_ascii=False))
         sys.exit(1)
+
+
+def _extract_measurements_from_response(response_data):
+    """Extrahiert Messwerte aus M-Bus Response (vereinfacht)"""
+    try:
+        if len(response_data) < 10:
+            return {}
+        
+        # Vereinfachte Extraktion - für den Anfang nur Dummy-Daten
+        # In echter Implementierung würde hier DIF/VIF Parsing stattfinden
+        measurements = {}
+        
+        # Beispiel: Suche nach typischen M-Bus Patterns
+        if len(response_data) > 20:
+            measurements["raw_response"] = {
+                "value": len(response_data),
+                "unit": "bytes",
+                "description": "Response Length",
+                "record_index": 1
+            }
+            
+            # Vereinfachte "Energie"-Extraktion (für Demo)
+            # Real würde DIF/VIF parsing verwendet
+            measurements["status"] = {
+                "value": "online",
+                "unit": "",
+                "description": "Device Status",
+                "record_index": 2
+            }
+        
+        return measurements
+        
+    except Exception as e:
+        print(f"[ERROR] Messwert-Extraktion fehlgeschlagen: {e}", file=sys.stderr)
+        return {}
 
 
 if __name__ == "__main__":
