@@ -38,7 +38,7 @@ class MBusGatewayService:
     
     def __init__(self, config_file="config.json"):
         # Konfiguration laden
-        self.config = Config(config_file)
+        self.config = Config()  # Config() lädt automatisch config.json
         print(f"[SERVICE] M-Bus Gateway Service gestartet")
         print(f"[CONFIG] Port: {self.config.data['mbus_port']}, Baudrate: {self.config.data['mbus_baudrate']}")
         
