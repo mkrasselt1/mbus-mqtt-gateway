@@ -600,9 +600,9 @@ def main():
             else:
                 result = cli.read_device(args.address)
         
-        # JSON Ausgabe
+        # JSON Ausgabe mit Decimal-Unterstützung
         if result:
-            print(json.dumps(result, ensure_ascii=False))
+            print(json.dumps(result, ensure_ascii=False, default=self._json_serializer))
         
     except KeyboardInterrupt:
         print("\n[INFO] Abgebrochen durch Benutzer", file=sys.stderr)
