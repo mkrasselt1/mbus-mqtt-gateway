@@ -229,6 +229,59 @@ class MBusGatewayService:
         print("[DISCOVERY] Starte M-Bus Device Discovery...")
         start_time = time.time()
         
+        # Prüfe ob bekannte Geräte in Config vorhanden sind
+        known_devices = self.config.data.get('known_devices', [])
+        enabled_known_devices = [d for d in known_devices if d.get('enabled', True)]
+        
+        if enabled_known_devices:
+            print(f"[DISCOVERY] {len(enabled_known_devices)} bekannte Geräte in Config gefunden - überspringe Scan")
+            
+            # Verwende nur bekannte Geräte aus Config
+            new_device_count = 0
+            for device in enabled_known_devices:
+                address = device['address']
+                if address not in self.devices:
+                    new_device_count += 1
+                    print(f"[DISCOVERY] Bekanntes Gerät hinzugefügt: Adresse {address}")
+                    
+                    device_info = {
+                        "address": address,
+                        "type": device.get('type', 'primary'),
+                        "name": device.get('name', f"Device_{address}"),
+                        "source": "config"
+                    }
+                    
+                    # Home Assistant Auto-Discovery senden
+                    self._publish_mqtt('send_device_discovery', device_info)
+                    
+                    # Device Info speichern
+                    self.devices[address] = {
+                        "address": address,
+                        "type": device_info["type"],
+                        "last_seen": datetime.now().isoformat(),
+                        "discovery_method": "config",
+                        "name": device_info["name"]
+                    }
+            
+            # Discovery Status aktualisieren
+            self.last_discovery = datetime.now()
+            duration = time.time() - start_time
+            
+            print(f"[DISCOVERY] Abgeschlossen: {len(enabled_known_devices)} Geräte aus Config geladen ({new_device_count} neu) in {duration:.3f}s")
+            
+            # Gateway Status Update
+            self._publish_mqtt('update_gateway_status', {
+                "device_count": len(self.devices),
+                "last_discovery": self.last_discovery.isoformat(),
+                "discovery_duration": round(duration, 3),
+                "discovery_method": "config"
+            })
+            
+            return True
+        
+        # Keine bekannten Geräte - führe Bus-Scan durch
+        print("[DISCOVERY] Keine bekannten Geräte in Config - starte Bus-Scan...")
+        
         # Verwende CLI V2 für bessere Kompatibilität  
         cli_tool = "mbus_cli_v2.py" if self.config.data.get('use_cli_v2', True) else "mbus_cli.py"
         
@@ -310,7 +363,8 @@ class MBusGatewayService:
         self._publish_mqtt('update_gateway_status', {
             "device_count": len(self.devices),
             "last_discovery": self.last_discovery.isoformat(),
-            "discovery_duration": round(duration, 2)
+            "discovery_duration": round(duration, 2),
+            "discovery_method": "bus_scan"
         })
         
         return True
