@@ -149,28 +149,57 @@ class HomeAssistantMQTT:
                 return
             
             device_id = cli_response.get("device_id", f"device_{address}")
-            data = cli_response.get("data", {})
             
-            if not data:
+            # Für CLI V2: Verwende identification falls verfügbar
+            if "identification" in cli_response:
+                device_id = cli_response["identification"] or f"device_{address}"
+            elif "address" in cli_response:
+                device_id = f"device_{cli_response['address']}"
+            
+            # CLI V2 verwendet 'records' statt 'data'
+            records = cli_response.get("records", [])
+            data = cli_response.get("data", {})  # Fallback für altes CLI
+            
+            if not records and not data:
                 print(f"[HA-MQTT] Gerät {device_id}: Keine Daten in CLI Response")
+                print(f"[HA-MQTT] Debug - CLI Response Keys: {list(cli_response.keys())}")
                 return
             
-            print(f"[HA-MQTT] Publiziere Daten für Gerät {device_id} ({len(data)} Messwerte)")
-            
-            # Durch alle CLI-Daten iterieren und zu MQTT Topics mappen
-            for data_key, data_value in data.items():
-                if isinstance(data_value, dict) and "value" in data_value:
-                    value = data_value["value"]
-                    unit = data_value.get("unit", "")
-                    description = data_value.get("description", "")
+            # CLI V2 Records verarbeiten
+            if records:
+                print(f"[HA-MQTT] Publiziere CLI V2 Daten für Gerät {device_id} ({len(records)} Records)")
+                
+                for i, record in enumerate(records):
+                    value = record.get("value")
+                    unit = record.get("unit", "")
+                    function_field = record.get("function_field", "")
                     
-                    # Topic-Name basierend auf Datentyp bestimmen
-                    topic_name = self._map_data_to_topic(data_key, unit, description)
-                    if topic_name:
-                        topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/{topic_name}/state"
-                        self.mqtt_client.publish(topic, str(value), retain=True)
+                    if value is not None:
+                        # Topic-Name basierend auf Datentyp bestimmen
+                        topic_name = self._map_record_to_topic(record, i)
+                        if topic_name:
+                            topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/{topic_name}/state"
+                            self.mqtt_client.publish(topic, str(value), retain=True)
+                            
+                            print(f"[HA-MQTT] {device_id}.{topic_name}: {value} {unit}")
+            
+            # Altes CLI Format (falls verwendet)
+            elif data:
+                print(f"[HA-MQTT] Publiziere Legacy CLI Daten für Gerät {device_id} ({len(data)} Messwerte)")
+                
+                for data_key, data_value in data.items():
+                    if isinstance(data_value, dict) and "value" in data_value:
+                        value = data_value["value"]
+                        unit = data_value.get("unit", "")
+                        description = data_value.get("description", "")
                         
-                        print(f"[HA-MQTT] {device_id}.{topic_name}: {value} {unit}")
+                        # Topic-Name basierend auf Datentyp bestimmen
+                        topic_name = self._map_data_to_topic(data_key, unit, description)
+                        if topic_name:
+                            topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/{topic_name}/state"
+                            self.mqtt_client.publish(topic, str(value), retain=True)
+                            
+                            print(f"[HA-MQTT] {device_id}.{topic_name}: {value} {unit}")
             
             # Status aktualisieren
             status_topic = f"{self.topic_prefix}/sensor/mbus_{device_id}/status/state"
@@ -178,7 +207,7 @@ class HomeAssistantMQTT:
                 "status": "online",
                 "last_read": cli_response.get("timestamp", datetime.now().isoformat()),
                 "read_duration": cli_response.get("read_duration_seconds", 0),
-                "data_count": len(data)
+                "data_count": len(records) if records else len(data)
             }
             self.mqtt_client.publish(status_topic, json.dumps(status_data), retain=True)
             
@@ -220,6 +249,51 @@ class HomeAssistantMQTT:
         # Unbekannter Typ
         print(f"[HA-MQTT] Unbekannter Datentyp: {data_key} ({unit}) - überspringe")
         return None
+    
+    def _map_record_to_topic(self, record: Dict[str, Any], index: int) -> Optional[str]:
+        """Mappt CLI V2 Records zu Home Assistant Topics"""
+        value = record.get("value")
+        unit = record.get("unit", "").lower()
+        function_field = record.get("function_field", "").lower()
+        
+        # Unit-basiertes Mapping (prioritär)
+        if "kwh" in unit or "wh" in unit:
+            return "energy"
+        elif "w" == unit or "kw" in unit:
+            return "power"  
+        elif "v" == unit or "volt" in unit:
+            return "voltage"
+        elif "a" == unit or "amp" in unit:
+            return "current"
+        
+        # Function-Field basiertes Mapping
+        if "energy" in function_field:
+            return "energy"
+        elif "power" in function_field:
+            return "power"
+        elif "voltage" in function_field:
+            return "voltage"
+        elif "current" in function_field:
+            return "current"
+        
+        # Value-basiertes Mapping (Heuristik)
+        if isinstance(value, (int, float)):
+            if value > 1000:  # Wahrscheinlich Energie in Wh
+                return "energy"
+            elif value > 100:  # Wahrscheinlich Spannung in V
+                return "voltage"
+            elif value < 50 and value > 0:  # Wahrscheinlich Strom in A oder Leistung in W
+                if value < 10:
+                    return "current"
+                else:
+                    return "power"
+        
+        # Fallback: Index-basiert
+        topic_map = {0: "energy", 1: "power", 2: "voltage", 3: "current"}
+        topic = topic_map.get(index, f"sensor_{index}")
+        
+        print(f"[HA-MQTT] Record {index} unbekannt - verwende Fallback '{topic}' (Unit: {unit}, Value: {value})")
+        return topic
     
     def publish_gateway_status(self, status: str):
         """Publiziert Gateway-Status"""
