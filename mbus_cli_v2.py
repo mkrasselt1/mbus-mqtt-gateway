@@ -232,78 +232,87 @@ class MBusCLI_V2:
             return None, None, None
     
     def read_device(self, address_or_id):
-        """Liest Daten von M-Bus Gerät mit meterbus Library"""
+        """Liest Daten von M-Bus Gerät mit robustem Raw-Parsing"""
         print(f"[INFO] Lese M-Bus Daten von {address_or_id}", file=sys.stderr)
         
         read_start = time.time()
         
         try:
-            with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
+            with serial.Serial(self.port, self.baudrate, parity='E', stopbits=1, timeout=2.0) as ser:
                 
                 if isinstance(address_or_id, str) and len(address_or_id) >= 16:
                     # Sekundäradresse - SELECT Frame senden
                     print(f"[DEBUG] Verwende Sekundäradresse: {address_or_id}", file=sys.stderr)
                     
-                    meterbus.send_select_frame(ser, address_or_id, False)
-                    time.sleep(0.1)
-                    
-                    # Nach Selektion REQ_UD2 an ADDRESS_NETWORK_LAYER
-                    meterbus.send_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER, False)
+                    try:
+                        meterbus.send_select_frame(ser, address_or_id, False)
+                        time.sleep(0.1)
+                        
+                        # Nach Selektion REQ_UD2 an ADDRESS_NETWORK_LAYER
+                        meterbus.send_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER, False)
+                    except:
+                        # Fallback: Raw SELECT Frame
+                        self._send_raw_select_frame(ser, address_or_id)
+                        self._send_raw_request_frame(ser, meterbus.ADDRESS_NETWORK_LAYER)
                     
                 else:
                     # Primäradresse - direkt REQ_UD2
                     address = int(address_or_id) if isinstance(address_or_id, str) else address_or_id
                     print(f"[DEBUG] Verwende Primäradresse: {address}", file=sys.stderr)
                     
-                    meterbus.send_request_frame(ser, address, False)
+                    # SND_NKE (Normalisierung) zuerst
+                    self._send_raw_nke_frame(ser, address)
+                    time.sleep(0.1)
+                    
+                    # REQ_UD2 (Daten anfordern)
+                    self._send_raw_request_frame(ser, address)
                 
                 time.sleep(0.5)
                 
-                # Antwort lesen
-                try:
-                    frame = meterbus.load(meterbus.recv_frame(ser))
+                # Raw Response lesen
+                available = ser.in_waiting
+                if available > 0:
+                    raw_response = ser.read(available)
+                    print(f"[DEBUG] Raw Response: {len(raw_response)} bytes", file=sys.stderr)
                     
-                    if isinstance(frame, meterbus.TelegramLong):
-                        # Daten extrahieren
-                        data_records = []
-                        
-                        for record in frame.records:
-                            record_data = {
-                                "value": getattr(record, 'parsed_value', None),
-                                "unit": getattr(record, 'unit', None),
-                                "function_field": getattr(record, 'function_field', None),
-                                "storage_number": getattr(record, 'storage_number', None),
-                                "tariff": getattr(record, 'tariff', None),
-                                "device_type": getattr(record, 'device_type', None),
-                            }
-                            data_records.append(record_data)
-                        
-                        return {
-                            "success": True,
-                            "address": address_or_id,
-                            "manufacturer": getattr(frame, 'manufacturer', None),
-                            "identification": getattr(frame, 'identification', None),
-                            "version": getattr(frame, 'version', None),
-                            "device_type": getattr(frame, 'device_type', None),
-                            "records": data_records,
-                            "record_count": len(data_records),
-                            "read_duration_seconds": round(time.time() - read_start, 3),
-                            "timestamp": datetime.now().isoformat()
-                        }
-                    else:
-                        return {
-                            "success": False,
-                            "error": f"Unerwarteter Frame-Typ: {type(frame)}",
-                            "address": address_or_id
-                        }
-                        
-                except meterbus.MBusFrameDecodeError as e:
+                    # Versuche zuerst meterbus Library
+                    meterbus_result = None
+                    try:
+                        # Simuliere meterbus recv_frame
+                        frame = meterbus.load(raw_response)
+                        if isinstance(frame, meterbus.TelegramLong):
+                            meterbus_result = self._extract_meterbus_data(frame)
+                    except Exception as e:
+                        print(f"[DEBUG] meterbus Library fehlgeschlagen: {e}", file=sys.stderr)
+                    
+                    # Fallback: Manueller Parser
+                    manual_result = self._parse_raw_mbus_frame(raw_response)
+                    
+                    # Kombiniere Ergebnisse
+                    result = {
+                        "success": True,
+                        "address": address_or_id,
+                        "raw_response_hex": raw_response.hex().upper(),
+                        "raw_response_length": len(raw_response),
+                        "read_duration_seconds": round(time.time() - read_start, 3),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    if meterbus_result:
+                        result["meterbus_data"] = meterbus_result
+                    
+                    if manual_result:
+                        result.update(manual_result)
+                    
+                    return result
+                else:
                     return {
                         "success": False,
-                        "error": f"Frame Decode Error: {e}",
-                        "address": address_or_id
+                        "error": "Keine Antwort vom Gerät",
+                        "address": address_or_id,
+                        "read_duration_seconds": round(time.time() - read_start, 3)
                     }
-                
+                    
         except Exception as e:
             return {
                 "success": False,
@@ -311,6 +320,237 @@ class MBusCLI_V2:
                 "address": address_or_id,
                 "read_duration_seconds": round(time.time() - read_start, 3)
             }
+    
+    def _send_raw_nke_frame(self, ser, address):
+        """Sendet SND_NKE Frame (Raw)"""
+        checksum = (0x40 + address) % 256
+        frame = bytes([0x10, 0x40, address, checksum, 0x16])
+        ser.write(frame)
+    
+    def _send_raw_request_frame(self, ser, address):
+        """Sendet REQ_UD2 Frame (Raw)"""
+        checksum = (0x5B + address) % 256
+        frame = bytes([0x10, 0x5B, address, checksum, 0x16])
+        ser.write(frame)
+    
+    def _send_raw_select_frame(self, ser, secondary_address):
+        """Sendet SELECT Frame (Raw)"""
+        try:
+            frame_data = bytes.fromhex(secondary_address)
+            if len(frame_data) == 8:
+                header = bytes([0x68, 0x0B, 0x0B, 0x68, 0x53, 0xFD, 0x52])
+                checksum = sum(header[4:] + frame_data) % 256
+                frame = header + frame_data + bytes([checksum, 0x16])
+                ser.write(frame)
+        except:
+            pass
+    
+    def _extract_meterbus_data(self, frame):
+        """Extrahiert Daten aus meterbus TelegramLong"""
+        try:
+            data_records = []
+            
+            for record in frame.records:
+                record_data = {
+                    "value": getattr(record, 'parsed_value', None),
+                    "unit": getattr(record, 'unit', None),
+                    "function_field": getattr(record, 'function_field', None),
+                    "storage_number": getattr(record, 'storage_number', None),
+                    "tariff": getattr(record, 'tariff', None),
+                    "device_type": getattr(record, 'device_type', None),
+                }
+                data_records.append(record_data)
+            
+            return {
+                "manufacturer": getattr(frame, 'manufacturer', None),
+                "identification": getattr(frame, 'identification', None),
+                "version": getattr(frame, 'version', None),
+                "device_type": getattr(frame, 'device_type', None),
+                "records": data_records,
+                "record_count": len(data_records)
+            }
+        except:
+            return None
+    
+    def _parse_raw_mbus_frame(self, data):
+        """Parst M-Bus Frame manuell (integriert aus mbus_frame_parser.py)"""
+        try:
+            if len(data) < 6 or data[0] != 0x68:
+                return None
+            
+            l_field = data[1]
+            c_field = data[4]
+            a_field = data[5]
+            ci_field = data[6] if len(data) > 6 else 0
+            
+            # Extrahiere Datenbereich
+            data_start = 7
+            data_end = 6 + l_field - 1
+            
+            if data_end > data_start and data_end <= len(data):
+                frame_data = data[data_start:data_end]
+                
+                # Parse M-Bus Identifikation
+                device_info = self._parse_mbus_identification(frame_data)
+                
+                # Parse Data Records
+                records = self._parse_mbus_records(frame_data[8:] if len(frame_data) > 8 else b'')
+                
+                return {
+                    "frame_type": "variable_length",
+                    "address": a_field,
+                    "ci_field": f"0x{ci_field:02X}",
+                    "device_id": device_info.get("device_id"),
+                    "manufacturer": device_info.get("manufacturer"),
+                    "version": device_info.get("version"),
+                    "device_type": device_info.get("device_type"),
+                    "device_type_name": device_info.get("device_type_name"),
+                    "records": records,
+                    "record_count": len(records)
+                }
+        except Exception as e:
+            print(f"[DEBUG] Manual parsing error: {e}", file=sys.stderr)
+            return None
+    
+    def _parse_mbus_identification(self, data):
+        """Parst M-Bus Identifikationsbereich"""
+        try:
+            if len(data) < 8:
+                return {}
+            
+            # Device ID (4 bytes, little endian)
+            device_id = int.from_bytes(data[0:4], byteorder='little')
+            
+            # Manufacturer (2 bytes)
+            mfg_code = int.from_bytes(data[4:6], byteorder='little')
+            manufacturer = self._decode_manufacturer(mfg_code)
+            
+            # Version & Device Type
+            version = data[6]
+            device_type = data[7]
+            device_type_name = self._decode_device_type(device_type)
+            
+            return {
+                "device_id": device_id,
+                "manufacturer": manufacturer,
+                "manufacturer_code": f"0x{mfg_code:04X}",
+                "version": version,
+                "device_type": device_type,
+                "device_type_name": device_type_name
+            }
+        except:
+            return {}
+    
+    def _parse_mbus_records(self, data):
+        """Parst M-Bus Data Records"""
+        records = []
+        pos = 0
+        
+        try:
+            while pos < len(data) - 1:
+                if pos >= len(data):
+                    break
+                
+                record = {}
+                
+                # DIF
+                dif = data[pos]
+                record["dif"] = f"0x{dif:02X}"
+                pos += 1
+                
+                # Skip DIF extensions
+                while pos < len(data) and (data[pos-1] & 0x80):
+                    pos += 1
+                
+                if pos >= len(data):
+                    break
+                
+                # VIF
+                vif = data[pos]
+                record["vif"] = f"0x{vif:02X}"
+                record["vif_description"] = self._decode_vif(vif)
+                pos += 1
+                
+                # Skip VIF extensions
+                while pos < len(data) and (data[pos-1] & 0x80):
+                    if pos < len(data):
+                        pos += 1
+                
+                # Data
+                data_length = self._get_data_length(dif)
+                if data_length > 0 and pos + data_length <= len(data):
+                    value_bytes = data[pos:pos + data_length]
+                    record["raw_data"] = value_bytes.hex().upper()
+                    
+                    if data_length <= 4:
+                        value = int.from_bytes(value_bytes, byteorder='little')
+                        record["value"] = value
+                    
+                    pos += data_length
+                else:
+                    pos += 1
+                
+                records.append(record)
+                
+                if len(records) > 20:  # Sicherheit
+                    break
+                    
+        except Exception as e:
+            print(f"[DEBUG] Record parsing error: {e}", file=sys.stderr)
+        
+        return records
+    
+    def _decode_manufacturer(self, code):
+        """Dekodiert Herstellercode"""
+        manufacturer_codes = {
+            0x15B5: "Landis+Gyr",
+            0x2C2D: "Kamstrup", 
+            0x4024: "Sensus",
+            0x4D26: "TCH",
+            0x5B15: "Elster/Honeywell"
+        }
+        
+        if code in manufacturer_codes:
+            return manufacturer_codes[code]
+        
+        try:
+            c1 = chr(((code >> 10) & 0x1F) + ord('A') - 1)
+            c2 = chr(((code >> 5) & 0x1F) + ord('A') - 1) 
+            c3 = chr((code & 0x1F) + ord('A') - 1)
+            return f"{c1}{c2}{c3}"
+        except:
+            return f"Code_{code:04X}"
+    
+    def _decode_device_type(self, device_type):
+        """Dekodiert Gerätetyp"""
+        device_types = {
+            0x02: "Elektrizität",
+            0x03: "Gas", 
+            0x04: "Wärme (Outlet)",
+            0x06: "Warmwasser",
+            0x07: "Wasser",
+            0x16: "Cold Water",
+            0x17: "Dual Water"
+        }
+        return device_types.get(device_type, f"Typ_{device_type:02X}")
+    
+    def _decode_vif(self, vif):
+        """Dekodiert Value Information Field"""
+        vif_codes = {
+            0x04: "Energy (Wh)",
+            0x07: "Energy (kWh)",
+            0x2B: "Power (W)",
+            0x2E: "Power (kW)",
+            0x6D: "Date/Time",
+            0x24: "Volume (10^-2 m³)",
+            0xFD: "Extension VIF"
+        }
+        return vif_codes.get(vif, f"VIF_{vif:02X}")
+    
+    def _get_data_length(self, dif):
+        """Ermittelt Datenlänge aus DIF"""
+        length_table = [0, 1, 2, 3, 4, 6, 8, 12]
+        return length_table[dif & 0x07]
 
 
 def main():
