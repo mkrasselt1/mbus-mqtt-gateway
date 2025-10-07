@@ -171,9 +171,14 @@ class MBusGatewayService:
         self.running = False
         self.shutdown_event.set()
     
-    def _run_cli_command(self, command_args: List[str], timeout: int = 30, cli_tool: str = "mbus_cli.py") -> Optional[Dict]:
+    def _run_cli_command(self, command_args: List[str], timeout: int = 30, cli_tool: Optional[str] = None) -> Optional[Dict]:
         """Führt CLI Kommando aus und parst JSON Response"""
         try:
+            # CLI Tool bestimmen falls nicht angegeben
+            if cli_tool is None:
+                use_cli_v2 = self.config.data.get('use_cli_v2', True)
+                cli_tool = "mbus_cli_v2.py" if use_cli_v2 else "mbus_cli.py"
+            
             # Vollständiges Kommando zusammenbauen mit spezifischem CLI Tool
             full_command = ["python3", cli_tool] + command_args
             
