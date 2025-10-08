@@ -227,9 +227,14 @@ class HomeAssistantMQTT:
                         }
                         
                         # Optional: Device Class und State Class hinzufügen
-                        if device_class:
+                        # WICHTIG: Device Class nur setzen wenn gültige Einheit vorhanden
+                        if device_class and normalized_unit and normalized_unit.strip() != "":
                             sensor_config["device_class"] = device_class
-                        if state_class:
+                            print(f"[HA-MQTT] Device Class gesetzt: {device_class} (Unit: {normalized_unit})")
+                        elif device_class:
+                            print(f"[HA-MQTT] Device Class {device_class} übersprungen - keine gültige Einheit ({normalized_unit})")
+                        
+                        if state_class and normalized_unit and normalized_unit.strip() != "":
                             sensor_config["state_class"] = state_class
                         
                         # Discovery-Nachricht senden (mit discovery_topic_prefix = "homeassistant")
@@ -292,9 +297,9 @@ class HomeAssistantMQTT:
     
     def _normalize_unit_for_home_assistant(self, unit: str, topic_name: str) -> str:
         """Normalisiert Units für Home Assistant Kompatibilität"""
-        if not unit or unit.strip() == "":
+        if not unit or unit.strip() == "" or unit.lower() == "none":
             # Keine automatischen Fallback-Units - leere Einheiten bleiben leer
-            print(f"[HA-MQTT] Leere Unit für {topic_name} -> bleibt leer")
+            print(f"[HA-MQTT] Leere/None Unit für {topic_name} -> bleibt leer")
             return ""
         
         # Home Assistant Standard-Units (offiziell unterstützt)

@@ -42,8 +42,9 @@ def run_pymeterbus_tool(tool_path, port, baudrate, address, output_format="json"
     """Führt das originale pyMeterBus Tool aus"""
     try:
         # Kommando zusammenbauen
+        # Verwende sys.executable für portablen Python-Aufruf
         cmd = [
-            "python3", tool_path,
+            sys.executable, tool_path,
             "-b", str(baudrate),
             "-a", str(address),
             "-o", output_format,
