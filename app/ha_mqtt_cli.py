@@ -234,8 +234,14 @@ class HomeAssistantMQTT:
                         elif device_class:
                             print(f"[HA-MQTT] Device Class {device_class} übersprungen - keine gültige Einheit ({normalized_unit})")
                         
+                        # State Class: Auch für numerische Werte ohne Einheit setzen (für Verlaufsdiagramme)
                         if state_class and normalized_unit and normalized_unit.strip() != "":
                             sensor_config["state_class"] = state_class
+                        elif self._should_have_measurement_state_class(value, normalized_unit):
+                            sensor_config["state_class"] = "measurement"
+                            print(f"[HA-MQTT] State Class 'measurement' gesetzt für numerischen Wert ohne Einheit: {value}")
+                        elif state_class:
+                            print(f"[HA-MQTT] State Class {state_class} übersprungen - keine gültige Einheit")
                         
                         # Discovery-Nachricht senden (mit discovery_topic_prefix = "homeassistant")
                         discovery_topic = f"{self.discovery_topic_prefix}/sensor/{unique_sensor_id}/config"
@@ -284,6 +290,14 @@ class HomeAssistantMQTT:
         elif topic_name in ["power", "voltage", "current"]:
             return "measurement"
         return None
+    
+    def _should_have_measurement_state_class(self, value, unit: str) -> bool:
+        """Prüft ob ein numerischer Wert ohne Einheit als measurement markiert werden soll"""
+        # Wenn es eine Zahl ist und keine Einheit hat, sollte es trotzdem measurement sein
+        # für Verlaufsdiagramme in Home Assistant
+        if isinstance(value, (int, float)) and (not unit or unit.strip() == "" or unit.lower() == "none"):
+            return True
+        return False
     
     def _get_icon_from_topic(self, topic_name: str) -> str:
         """Mappt Topic-Namen zu Home Assistant Icons"""
