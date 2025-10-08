@@ -20,8 +20,9 @@ class HomeAssistantMQTT:
         self.gateway_topic = f"{discovery_topic_prefix}/sensor/mbus_gateway"
         
         print(f"[HA-MQTT] Home Assistant Interface initialisiert")
-        print(f"[HA-MQTT] State Topics: {state_topic_prefix}/*")
-        print(f"[HA-MQTT] Discovery Topics: {discovery_topic_prefix}/*")
+        # Reduziertes Logging - nur wichtige Infos
+        # print(f"[HA-MQTT] State Topics: {state_topic_prefix}/*")
+        # print(f"[HA-MQTT] Discovery Topics: {discovery_topic_prefix}/*")
     
     def send_device_discovery(self, device_info: Dict[str, Any]):
         """Sendet Home Assistant Auto-Discovery für ein neues Gerät"""
@@ -30,15 +31,16 @@ class HomeAssistantMQTT:
             device_id = device_info.get("device_id", f"device_{address}")
             manufacturer = device_info.get("manufacturer", "M-Bus")
             
-            print(f"[HA-MQTT] Sende Discovery für Gerät {device_id} (Adresse {address})")
+            # Reduziertes Logging
+            # print(f"[HA-MQTT] Sende Discovery für Gerät {device_id} (Adresse {address})")
             
             # Discovery bereits gesendet?
             if device_id in self.discovery_sent:
-                print(f"[HA-MQTT] Discovery für {device_id} bereits gesendet")
+                # print(f"[HA-MQTT] Discovery für {device_id} bereits gesendet")
                 return
             
             # Discovery wird durch CLI V2 Records dynamisch erstellt
-            print(f"[HA-MQTT] Discovery für {device_id} wird bei erstem Datenlesen erstellt")
+            # print(f"[HA-MQTT] Discovery für {device_id} wird bei erstem Datenlesen erstellt")
             
         except Exception as e:
             print(f"[HA-MQTT] Discovery Fehler für Gerät {device_info}: {e}")
@@ -49,6 +51,12 @@ class HomeAssistantMQTT:
             if not cli_response.get("success"):
                 print(f"[HA-MQTT] Gerät {address}: CLI Response nicht erfolgreich")
                 return
+            
+            # Kompakte Zusammenfassung vorbereiten
+            records = cli_response.get("records", [])
+            device_id = cli_response.get("identification", f"device_{address}")
+            published_count = 0
+            values_summary = []
             
             device_id = cli_response.get("device_id", f"device_{address}")
             
@@ -66,7 +74,8 @@ class HomeAssistantMQTT:
                 print(f"[HA-MQTT] Debug - CLI Response Keys: {list(cli_response.keys())}")
                 return
             
-            print(f"[HA-MQTT] Publiziere CLI V2 Daten für Gerät {device_id} ({len(records)} Records)")
+            # Reduziertes Logging - nur kompakte Info
+            # print(f"[HA-MQTT] Publiziere CLI V2 Daten für Gerät {device_id} ({len(records)} Records)")
             
             # Dynamische Discovery für gefundene Records
             self._send_dynamic_discovery_for_records(address, device_id, records, cli_response)
@@ -85,7 +94,18 @@ class HomeAssistantMQTT:
                         state_topic = f"{self.state_topic_prefix}/sensor/mbus_{device_id}/{topic_name}_{i}/state"
                         self.mqtt_client.publish(state_topic, str(value), retain=True)
                         
-                        print(f"[HA-MQTT] {device_id}.{topic_name}_{i}: {value} {unit} -> {state_topic}")
+                        # Sammle für kompakte Zusammenfassung
+                        published_count += 1
+                        if unit and unit.lower() != "none":
+                            values_summary.append(f"{value}{unit}")
+                        else:
+                            values_summary.append(f"{value}")
+            
+            # Kompakte Zusammenfassung ausgeben
+            summary = ", ".join(values_summary[:6])  # Maximal 6 Werte zeigen
+            if len(values_summary) > 6:
+                summary += f" (+ {len(values_summary) - 6} weitere)"
+            print(f"[HA-MQTT] {device_id}: {summary}")
             
             # Status aktualisieren
             status_topic = f"{self.state_topic_prefix}/sensor/mbus_{device_id}/status/state"
@@ -106,7 +126,8 @@ class HomeAssistantMQTT:
         unit = record.get("unit", "").lower().strip()
         function_field = record.get("function_field", "").lower()
         
-        print(f"[HA-MQTT] Record {index} Mapping: Unit='{unit}', Function='{function_field}', Value={value}")
+        # Reduziertes Logging - nur bei unbekannten Records
+        # print(f"[HA-MQTT] Record {index} Mapping: Unit='{unit}', Function='{function_field}', Value={value}")
         
         # Präzise Unit-basierte Erkennung (höchste Priorität)
         if unit in ["kwh", "wh", "mwh"]:  # Energie-Einheiten
@@ -142,12 +163,12 @@ class HomeAssistantMQTT:
             
             # Strom: Normalerweise niedrige Werte (0.1-50A für Haushalte)
             elif 0.1 <= value <= 50:
-                print(f"[HA-MQTT] Record {index}: Strombereich ({value}A) -> Current")
+                # print(f"[HA-MQTT] Record {index}: Strombereich ({value}A) -> Current")
                 return "current"
             
             # Leistung: Mittlere Werte (1-10000W für Haushalte)
             elif 1 <= value <= 10000:
-                print(f"[HA-MQTT] Record {index}: Leistungsbereich ({value}W) -> Power")
+                # print(f"[HA-MQTT] Record {index}: Leistungsbereich ({value}W) -> Power")
                 return "power"
         
         # Intelligenter Fallback basierend auf typischen M-Bus Reihenfolgen
@@ -160,7 +181,8 @@ class HomeAssistantMQTT:
         }
         
         fallback_topic = fallback_map.get(index, f"sensor_{index}")
-        print(f"[HA-MQTT] Record {index} unbekannt - verwende intelligenten Fallback '{fallback_topic}' (Unit: '{unit}', Function: '{function_field}', Value: {value})")
+        # Nur bei wirklich unbekannten Records loggen
+        # print(f"[HA-MQTT] Record {index} unbekannt - verwende intelligenten Fallback '{fallback_topic}' (Unit: '{unit}', Function: '{function_field}', Value: {value})")
         return fallback_topic
     
     def _send_dynamic_discovery_for_records(self, address: int, device_id: str, records: list, cli_response: dict):
@@ -169,7 +191,10 @@ class HomeAssistantMQTT:
             if device_id in self.discovery_sent:
                 return  # Discovery bereits gesendet
             
-            print(f"[HA-MQTT] Sende dynamische Discovery für {device_id} mit {len(records)} Records")
+            # Discovery nur beim ersten Mal loggen
+            if device_id not in self.discovery_sent:
+                print(f"[HA-MQTT] Erstelle Discovery für {device_id} mit {len(records)} Sensoren")
+            # print(f"[HA-MQTT] Sende dynamische Discovery für {device_id} mit {len(records)} Records")
             
             # Device Information aus CLI Response
             manufacturer = cli_response.get("manufacturer", "M-Bus")
@@ -230,18 +255,20 @@ class HomeAssistantMQTT:
                         # WICHTIG: Device Class nur setzen wenn gültige Einheit vorhanden
                         if device_class and normalized_unit and normalized_unit.strip() != "":
                             sensor_config["device_class"] = device_class
-                            print(f"[HA-MQTT] Device Class gesetzt: {device_class} (Unit: {normalized_unit})")
+                            # print(f"[HA-MQTT] Device Class gesetzt: {device_class} (Unit: {normalized_unit})")
                         elif device_class:
-                            print(f"[HA-MQTT] Device Class {device_class} übersprungen - keine gültige Einheit ({normalized_unit})")
+                            # print(f"[HA-MQTT] Device Class {device_class} übersprungen - keine gültige Einheit ({normalized_unit})")
+                            pass
                         
                         # State Class: Auch für numerische Werte ohne Einheit setzen (für Verlaufsdiagramme)
                         if state_class and normalized_unit and normalized_unit.strip() != "":
                             sensor_config["state_class"] = state_class
                         elif self._should_have_measurement_state_class(value, normalized_unit):
                             sensor_config["state_class"] = "measurement"
-                            print(f"[HA-MQTT] State Class 'measurement' gesetzt für numerischen Wert ohne Einheit: {value}")
+                            # print(f"[HA-MQTT] State Class 'measurement' gesetzt für numerischen Wert ohne Einheit: {value}")
                         elif state_class:
-                            print(f"[HA-MQTT] State Class {state_class} übersprungen - keine gültige Einheit")
+                            # print(f"[HA-MQTT] State Class {state_class} übersprungen - keine gültige Einheit")
+                            pass
                         
                         # Discovery-Nachricht senden (mit discovery_topic_prefix = "homeassistant")
                         discovery_topic = f"{self.discovery_topic_prefix}/sensor/{unique_sensor_id}/config"
@@ -251,7 +278,8 @@ class HomeAssistantMQTT:
                             retain=True
                         )
                         
-                        print(f"[HA-MQTT] Discovery gesendet: {sensor_name} ({normalized_unit}) -> {discovery_topic}")
+                        # Reduziertes Logging - Discovery nur bei Problemen
+                        # print(f"[HA-MQTT] Discovery gesendet: {sensor_name} ({normalized_unit}) -> {discovery_topic}")
             
             # Gerät als verfügbar markieren
             availability_topic = f"{self.state_topic_prefix}/sensor/mbus_{device_id}/availability"
@@ -313,7 +341,7 @@ class HomeAssistantMQTT:
         """Normalisiert Units für Home Assistant Kompatibilität"""
         if not unit or unit.strip() == "" or unit.lower() == "none":
             # Keine automatischen Fallback-Units - leere Einheiten bleiben leer
-            print(f"[HA-MQTT] Leere/None Unit für {topic_name} -> bleibt leer")
+            # print(f"[HA-MQTT] Leere/None Unit für {topic_name} -> bleibt leer")
             return ""
         
         # Home Assistant Standard-Units (offiziell unterstützt)
@@ -372,7 +400,8 @@ class HomeAssistantMQTT:
         normalized = unit_normalization.get(unit_lower, unit)
         
         if normalized != unit:
-            print(f"[HA-MQTT] Unit normalisiert: '{unit}' -> '{normalized}'")
+            # print(f"[HA-MQTT] Unit normalisiert: '{unit}' -> '{normalized}'")
+            pass
         
         return normalized
     
