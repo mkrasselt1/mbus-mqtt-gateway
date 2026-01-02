@@ -18,21 +18,22 @@ except ImportError as e:
 
 
 class MBusClient:
-    def __init__(self, port, baudrate=2400, mqtt_client=None):
+    def __init__(self, port, baudrate=2400, mqtt_client=None, debug=False):
         """
         Initialize the M-Bus client with the given serial port and baudrate.
         :param port: Serial port where the M-Bus master is connected (e.g., '/dev/ttyUSB0').
-        :param baudrate: Baudrate for the M-Bus communication (default: 2400).
+        :param debug: Enable debug output (default: False).
         """
         self.port = port
-        self.baudrate = baudrate
+        self.debug = debug
         self.devices = []  # List of detected M-Bus devices
         self.device_info = {}  # Dict to store device information
         self.device_manager = device_manager
         
 
         
-        print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
+        if self.debug:
+            print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
 
     def start_periodic_scan(self, interval_minutes):
         """
@@ -485,11 +486,13 @@ class MBusClient:
                 val, match, manufacturer = self.mbus_probe_secondary_address(ser, new_mask, read_echo)
                 if val is True:
                     if match not in self.devices:  # Duplikatsprüfung
-                        print("Device found with id {0} ({1}), using mask {2}".format(
-                        match, manufacturer, new_mask))
+                        if self.debug:
+                            print("Device found with id {0} ({1}), using mask {2}".format(
+                            match, manufacturer, new_mask))
                         self.devices.append(match)  # Store the found device
                     else:
-                        print("Device {0} already known, skipping".format(match))
+                        if self.debug:
+                            print("Device {0} already known, skipping".format(match))
                 elif val is False:  # Collision
                     self.mbus_scan_secondary_address_range(ser, pos+1, new_mask, read_echo)
 

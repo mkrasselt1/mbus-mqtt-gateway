@@ -113,7 +113,9 @@ class HomeAssistantMQTT:
                 "status": "online",
                 "last_read": cli_response.get("timestamp", datetime.now().isoformat()),
                 "read_duration": cli_response.get("read_duration_seconds", 0),
-                "data_count": len(records)
+                "data_count": len(records),
+                "primary_address": cli_response.get("primary_address", address),
+                "device_type": cli_response.get("device_type", "primary")
             }
             self.mqtt_client.publish(status_topic, json.dumps(status_data), retain=True)
             
@@ -200,10 +202,13 @@ class HomeAssistantMQTT:
             manufacturer = cli_response.get("manufacturer", "M-Bus")
             identification = cli_response.get("identification", device_id)
             
+            # Verwende device_name aus Config falls verfügbar, sonst generischen Namen
+            device_name = cli_response.get("device_name", f"M-Bus {identification}")
+            
             # Device-Konfiguration
             device_config = {
                 "identifiers": [f"mbus_{device_id}"],
-                "name": f"M-Bus {identification}",
+                "name": device_name,
                 "manufacturer": manufacturer,
                 "model": "M-Bus Meter",
                 "sw_version": "CLI-Gateway-v2.0"
@@ -244,7 +249,7 @@ class HomeAssistantMQTT:
                         
                         sensor_config = {
                             **base_config,
-                            "name": f"M-Bus {identification} {sensor_name} {i}",  # Index auch im Namen für Klarheit
+                            "name": f"{device_name} {sensor_name} {i}",  # Index auch im Namen für Klarheit
                             "unique_id": unique_sensor_id,
                             "state_topic": state_topic,
                             "unit_of_measurement": normalized_unit,

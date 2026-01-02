@@ -7,6 +7,11 @@ import signal
 import sys
 import time
 import threading
+import logging
+
+# Logging für M-Bus Library konfigurieren
+logging.getLogger('meterbus').setLevel(logging.WARNING)
+logging.getLogger('serial').setLevel(logging.WARNING)
 
 # Globale Variablen für sauberes Shutdown
 shutdown_flag = False
@@ -58,7 +63,8 @@ def start_mbus_scanning():
     mbus_client = MBusClient(
         port=config.data["mbus_port"],
         baudrate=config.data["mbus_baudrate"],
-        mqtt_client=None  # Kein MQTT
+        mqtt_client=None,  # Kein MQTT
+        debug=config.data.get("enable_debug", False)
     )
     
     # Scan-Intervall aus Konfiguration lesen (Standard: 60 Minuten)
@@ -77,6 +83,10 @@ def start_gateway_monitoring():
     """Startet Gateway-Überwachung und regelmäßige Updates"""
     global shutdown_flag
     
+    # Config laden für Debug-Einstellungen
+    config = Config()
+    enable_debug = config.data.get("enable_debug", False)
+    
     # Lokale Start-Zeit für diesen Thread
     thread_start_time = time.time()
     status_counter = 0
@@ -92,8 +102,8 @@ def start_gateway_monitoring():
             uptime = int(time.time() - thread_start_time)
             device_manager.update_gateway_uptime(uptime)
             
-            # Debug: Uptime ausgeben
-            if uptime % 60 == 0:  # Jede Minute
+            # Debug: Uptime ausgeben (nur wenn Debug aktiviert)
+            if enable_debug and uptime % 60 == 0:  # Jede Minute
                 print(f"[DEBUG] Gateway Uptime: {uptime} Sekunden ({uptime//60} Minuten)")
             
             # Status nur alle 5 Minuten ausgeben (20 * 15 Sekunden)
@@ -145,7 +155,8 @@ if __name__ == "__main__":
         mbus_client = MBusClient(
             port=config.data["mbus_port"],
             baudrate=config.data["mbus_baudrate"],
-            mqtt_client=None  # Wird über DeviceManager gekoppelt
+            mqtt_client=None,  # Wird über DeviceManager gekoppelt
+            debug=config.data.get("enable_debug", False)
         )
         
         print("[INFO] Alle Services gestartet:")

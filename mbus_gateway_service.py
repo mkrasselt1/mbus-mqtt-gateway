@@ -447,6 +447,12 @@ class MBusGatewayService:
             if address in self.devices:
                 self.devices[address]["last_read"] = datetime.now().isoformat()
                 self.devices[address]["last_data"] = response
+                
+                # Konfigurationsdaten zur Response hinzufügen
+                device_config = self.devices[address]
+                response["device_name"] = device_config.get("name", f"Device_{address}")
+                response["primary_address"] = address
+                response["device_type"] = device_config.get("type", "primary")
             
             return response
         else:
