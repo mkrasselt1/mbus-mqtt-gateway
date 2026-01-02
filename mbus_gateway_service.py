@@ -49,12 +49,15 @@ class MBusGatewayService:
         # Interval-Konfiguration (unterstützt Dezimalwerte für halbe Minuten)
         discovery_minutes = self.config.data.get('discovery_interval_minutes', 15)
         reading_minutes = self.config.data.get('reading_interval_minutes', 1)
+        enable_discovery = self.config.data.get('enable_discovery', True)
         
         self.discovery_interval = discovery_minutes * 60  # Minuten in Sekunden
         self.read_interval = reading_minutes * 60  # Minuten in Sekunden
+        self.enable_discovery = enable_discovery
         
         print(f"[CONFIG] Discovery-Intervall: {discovery_minutes} Minuten ({self.discovery_interval} Sekunden)")
         print(f"[CONFIG] Reading-Intervall: {reading_minutes} Minuten ({self.read_interval} Sekunden)")
+        print(f"[CONFIG] Discovery aktiviert: {enable_discovery}")
         
         # Lade bekannte Geräte aus Config sofort
         self._load_known_devices_from_config()
@@ -533,7 +536,11 @@ class MBusGatewayService:
         })
     
     def discovery_loop(self):
-        """Discovery Thread - läuft alle 15 Minuten"""
+        """Discovery Thread - läuft alle 15 Minuten (falls aktiviert)"""
+        if not self.enable_discovery:
+            print("[DISCOVERY] Discovery ist deaktiviert - Thread beendet")
+            return
+            
         print("[DISCOVERY] Discovery Thread gestartet")
         
         # Erste Discovery sofort ausführen
@@ -563,10 +570,13 @@ class MBusGatewayService:
         print("[READING] Warte 10 Sekunden für System-Initialisierung...")
         time.sleep(10)
         
-        # Wenn keine Geräte geladen, versuche Discovery
+        # Wenn keine Geräte geladen, versuche Discovery (falls aktiviert)
         if not self.devices:
-            print("[READING] Keine Geräte gefunden, starte Discovery...")
-            self.discover_devices()
+            if self.enable_discovery:
+                print("[READING] Keine Geräte gefunden, starte Discovery...")
+                self.discover_devices()
+            else:
+                print("[READING] Keine Geräte gefunden und Discovery deaktiviert - verwende nur bekannte Geräte aus Config")
         
         # Falls immer noch keine Geräte, warte auf Discovery
         retry_count = 0
@@ -622,10 +632,14 @@ class MBusGatewayService:
             print("[SERVICE] CLI Tool Test erfolgreich")
             
             # Threads starten
-            self.discovery_thread = threading.Thread(target=self.discovery_loop, name="Discovery")
+            if self.enable_discovery:
+                self.discovery_thread = threading.Thread(target=self.discovery_loop, name="Discovery")
+                self.discovery_thread.start()
+                print("[SERVICE] Discovery Thread gestartet")
+            else:
+                print("[SERVICE] Discovery deaktiviert - nur bekannte Geräte werden verwendet")
+                
             self.reading_thread = threading.Thread(target=self.reading_loop, name="Reading")
-            
-            self.discovery_thread.start()
             self.reading_thread.start()
             
             print("[SERVICE] Service erfolgreich gestartet")
