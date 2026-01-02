@@ -232,7 +232,7 @@ class HomeAssistantMQTT:
                     if topic_name:  # Nur wenn topic_name nicht None ist
                         sensor_name = self._get_sensor_name_from_topic(topic_name, unit, function_field)
                         device_class = self._get_device_class_from_topic(topic_name)
-                        state_class = self._get_state_class_from_topic(topic_name)
+                        state_class = self._get_state_class_from_topic(topic_name, value)  # Wert für negative Energie-Prüfung
                         icon = self._get_icon_from_topic(topic_name)
                         
                         # Unit normalisieren für Home Assistant Kompatibilität
@@ -311,10 +311,15 @@ class HomeAssistantMQTT:
         }
         return class_map.get(topic_name)
     
-    def _get_state_class_from_topic(self, topic_name: str) -> Optional[str]:
+    def _get_state_class_from_topic(self, topic_name: str, value=None) -> Optional[str]:
         """Mappt Topic-Namen zu Home Assistant State Classes"""
         if topic_name == "energy":
-            return "total_increasing"
+            # WICHTIG: total_increasing nur für positive Werte!
+            # Negative Energiewerte = Rückspeisung -> measurement verwenden
+            if value is not None and isinstance(value, (int, float)) and value < 0:
+                return "measurement"  # Negative Energie = Rückspeisung/Export
+            else:
+                return "total_increasing"  # Positive Energie = Verbrauch/Import
         elif topic_name in ["power", "voltage", "current"]:
             return "measurement"
         return None

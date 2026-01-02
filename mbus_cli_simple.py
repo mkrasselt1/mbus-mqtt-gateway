@@ -111,7 +111,7 @@ def extract_frame_data(frame):
                 unit = str(unit)
             
             recs.append({
-                'value': rec.value,
+                'value': float(rec.value),  # Decimal in float umwandeln für JSON-Serialisierung
                 'unit': unit
             })
         
