@@ -25,6 +25,7 @@ class MBusClient:
         :param debug: Enable debug output (default: False).
         """
         self.port = port
+        self.baudrate = baudrate  # Baudrate als Instanzvariable speichern
         self.debug = debug
         self.devices = []  # List of detected M-Bus devices
         self.device_info = {}  # Dict to store device information
