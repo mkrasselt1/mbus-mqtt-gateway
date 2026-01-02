@@ -205,9 +205,14 @@ if __name__ == "__main__":
                 
                 print("[INFO] Alle bekannten Geräte konfiguriert - starte Reading-Loop...")
                 
-                # Starte einfachen Reading-Loop für bekannte Geräte
+                # Starte echten Reading-Loop für bekannte Geräte
                 reading_interval = config.data.get("reading_interval_minutes", 1) * 60  # in Sekunden
                 print(f"[INFO] Reading-Intervall: {reading_interval} Sekunden")
+                
+                # CLI Tool Setup (wie im Service)
+                use_cli_v2 = config.data.get('use_cli_v2', True)
+                cli_tool = "mbus_cli_original.py" if use_cli_v2 else "mbus_cli_simple.py"
+                print(f"[INFO] Verwende CLI Tool: {cli_tool}")
                 
                 last_read_time = 0
                 try:
@@ -225,20 +230,64 @@ if __name__ == "__main__":
                                     
                                 address = device['address']
                                 device_name = device.get('name', f"Device_{address}")
+                                baudrate = device.get('baudrate', config.data.get('mbus_baudrate', 9600))
                                 
                                 try:
                                     print(f"[READ] Lese Daten von {device_name} (Adresse {address})...")
                                     
-                                    # Hier würde normalerweise mbus_client.read_device_data() aufgerufen werden
-                                    # Aber der MBusClient hat keine read_device_data Methode
-                                    # Für jetzt: Simuliere erfolgreiche Datenlesung
-                                    print(f"[READ] {device_name}: Simulierte Datenlesung erfolgreich")
-                                    devices_read += 1
+                                    # CLI Kommando zusammenbauen (wie im Service)
+                                    import subprocess
+                                    import json
                                     
+                                    cli_args = [
+                                        sys.executable, cli_tool,
+                                        "read",
+                                        "--port", config.data["mbus_port"],
+                                        "--baudrate", str(baudrate),
+                                        "--address", str(address)
+                                    ]
+                                    
+                                    print(f"[CLI] Führe aus: {' '.join(cli_args)}")
+                                    
+                                    # CLI ausführen
+                                    result = subprocess.run(
+                                        cli_args,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=15,
+                                        cwd=os.path.dirname(os.path.abspath(__file__))
+                                    )
+                                    
+                                    if result.returncode == 0:
+                                        try:
+                                            device_data = json.loads(result.stdout)
+                                            if device_data.get("success"):
+                                                # Konfigurationsdaten hinzufügen (wie im Service)
+                                                device_data["device_name"] = device_name
+                                                device_data["primary_address"] = address
+                                                device_data["device_type"] = device.get("type", "primary")
+                                                
+                                                # Daten zu MQTT senden
+                                                if mqtt_client and hasattr(mqtt_client, 'publish_device_data'):
+                                                    mqtt_client.publish_device_data(address, device_data)
+                                                
+                                                records = device_data.get("records", [])
+                                                print(f"[READ] {device_name}: ✅ {len(records)} Messwerte gelesen")
+                                                devices_read += 1
+                                            else:
+                                                print(f"[READ] {device_name}: ❌ CLI erfolglos")
+                                        except json.JSONDecodeError as e:
+                                            print(f"[READ] {device_name}: ❌ JSON Parse Fehler: {e}")
+                                    else:
+                                        print(f"[READ] {device_name}: ❌ CLI Fehler (Exit Code: {result.returncode})")
+                                        print(f"[READ] STDERR: {result.stderr}")
+                                    
+                                except subprocess.TimeoutExpired:
+                                    print(f"[READ] {device_name}: ❌ Timeout nach 15 Sekunden")
                                 except Exception as e:
-                                    print(f"[READ] Fehler bei {device_name}: {e}")
+                                    print(f"[READ] {device_name}: ❌ Fehler: {e}")
                             
-                            print(f"[READ] Zyklus abgeschlossen: {devices_read}/{len(known_devices)} Geräte gelesen")
+                            print(f"[READ] Zyklus abgeschlossen: {devices_read}/{len(known_devices)} Geräte erfolgreich")
                             last_read_time = current_time
                         
                         # Warte kurz vor nächster Prüfung
@@ -246,9 +295,6 @@ if __name__ == "__main__":
                         
                 except KeyboardInterrupt:
                     print("[INFO] Reading-Loop beendet durch Benutzer")
-            else:
-                print("[WARN] Keine bekannten Geräte in Config gefunden - Service beendet")
-                return
             else:
                 print("[WARN] Keine bekannten Geräte in Config gefunden - Service beendet")
                 return
