@@ -170,12 +170,13 @@ if __name__ == "__main__":
         gateway_thread = threading.Thread(target=start_gateway_monitoring, name="Gateway-Monitoring", daemon=True)
         gateway_thread.start()
         
-        # M-Bus Scanning im Hauptthread (nur wenn Discovery aktiviert)
+        # M-Bus Scanning im Hintergrund-Thread (nur wenn Discovery aktiviert)
         enable_discovery = config.data.get("enable_discovery", True)
         if enable_discovery:
             scan_interval = config.data.get("mbus_scan_interval_minutes", 60)
-            mbus_client.start(scan_interval_minutes=scan_interval)
-            print(f"[INFO] M-Bus Discovery aktiviert - Scan alle {scan_interval} Minuten")
+            mbus_thread = threading.Thread(target=lambda: mbus_client.start(scan_interval_minutes=scan_interval), name="M-Bus-Scanning", daemon=True)
+            mbus_thread.start()
+            print(f"[INFO] M-Bus Discovery aktiviert - Scan alle {scan_interval} Minuten im Hintergrund")
         else:
             print("[INFO] M-Bus Discovery deaktiviert - verwende nur bekannte Geräte aus Config")
             # Bei deaktiviertem Discovery: Bekannte Geräte aus Config laden und einmalig Discovery senden
