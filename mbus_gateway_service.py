@@ -92,6 +92,14 @@ class MBusGatewayService:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
     
+    def _get_default_device_settings(self):
+        """Gibt Standardeinstellungen für Geräte zurück"""
+        return {
+            "baudrate": self.config.data.get('mbus_baudrate', 9600),
+            "poll_interval_minutes": self.config.data.get('reading_interval_minutes', 1),
+            "last_read_timestamp": 0
+        }
+    
     def _load_known_devices_from_config(self):
         """Lädt bekannte Geräte aus der Konfiguration"""
         known_devices = self.config.data.get('known_devices', [])
@@ -108,8 +116,15 @@ class MBusGatewayService:
                         "name": device.get('name', f"Device_{address}"),
                         "source": "config",
                         "last_seen": datetime.now().isoformat(),
-                        "discovery_method": "config"
+                        "discovery_method": "config",
+                        **self._get_default_device_settings()
                     }
+                    
+                    # Override with device-specific settings if provided
+                    if 'baudrate' in device:
+                        device_info['baudrate'] = device['baudrate']
+                    if 'poll_interval_minutes' in device:
+                        device_info['poll_interval_minutes'] = device['poll_interval_minutes']
                     
                     self.devices[address] = device_info
                     print(f"[CONFIG] Gerät hinzugefügt: Adresse {address} ({device_info['name']})")
@@ -298,7 +313,8 @@ class MBusGatewayService:
                         "type": device_info["type"],
                         "last_seen": datetime.now().isoformat(),
                         "discovery_method": "config",
-                        "name": device_info["name"]
+                        "name": device_info["name"],
+                        **self._get_default_device_settings()
                     }
             
             # Discovery Status aktualisieren
@@ -361,7 +377,8 @@ class MBusGatewayService:
                                 "type": device_info["type"],
                                 "last_seen": datetime.now().isoformat(),
                                 "discovery_method": "config",
-                                "name": device_info["name"]
+                                "name": device_info["name"],
+                                **self._get_default_device_settings()
                             }
                 return len(known_devices) > 0
             
@@ -388,7 +405,8 @@ class MBusGatewayService:
                 "manufacturer": device_info.get("manufacturer", "unknown"),
                 "medium": device_info.get("medium", "unknown"),
                 "last_seen": datetime.now().isoformat(),
-                "discovery_info": device_info
+                "discovery_info": device_info,
+                **self._get_default_device_settings()
             }
         
         # Discovery Status aktualisieren
@@ -409,10 +427,13 @@ class MBusGatewayService:
     
     def read_device_data(self, address: int) -> Optional[Dict]:
         """Liest Daten von einem einzelnen Gerät"""
+        # Verwende gerätespezifische Baudrate oder globale als Fallback
+        device_baudrate = self.devices.get(address, {}).get('baudrate', self.config.data.get("mbus_baudrate", 9600))
+        
         cli_args = [
             "read",
             "--port", self.config.data["mbus_port"],
-            "--baudrate", str(self.config.data["mbus_baudrate"]),
+            "--baudrate", str(device_baudrate),
             "--address", str(address)
         ]
         
@@ -431,43 +452,57 @@ class MBusGatewayService:
             return None
     
     def read_all_devices(self):
-        """Liest Daten von allen bekannten Geräten"""
+        """Liest Daten von allen bekannten Geräten basierend auf ihren individuellen Poll-Intervallen"""
         if not self.devices:
             print("[READ] Keine Geräte bekannt - überspringe Datenlesung")
             return
         
-        print(f"[READ] Lese Daten von {len(self.devices)} Geräten...")
+        print(f"[READ] Prüfe {len(self.devices)} Geräte für Datenlesung...")
         read_start = time.time()
-        successful_reads = 0
+        devices_read = 0
         
-        for address in self.devices.keys():
+        current_time = time.time()
+        
+        for address, device_info in self.devices.items():
             try:
-                device_data = self.read_device_data(address)
+                # Prüfe ob Poll-Intervall abgelaufen ist
+                poll_interval_minutes = device_info.get('poll_interval_minutes', self.config.data.get('reading_interval_minutes', 1))
+                poll_interval_seconds = poll_interval_minutes * 60
                 
-                if device_data:
-                    successful_reads += 1
+                last_read_time = device_info.get('last_read_timestamp', 0)
+                time_since_last_read = current_time - last_read_time
+                
+                if time_since_last_read >= poll_interval_seconds:
+                    print(f"[READ] Lese Gerät {address} ({device_info['name']}) - letztes Mal vor {time_since_last_read:.1f}s")
                     
-                    # Debug: JSON-Struktur ausgeben
-                    print(f"[READ] Gerät {address} JSON-Keys: {list(device_data.keys())}")
+                    device_data = self.read_device_data(address)
                     
-                    # Daten zu Home Assistant senden
-                    self._publish_mqtt('publish_device_data', address, device_data)
-                    
-                    # Messwerte zählen (verschiedene CLI Formate unterstützen)
-                    record_count = 0
-                    if 'records' in device_data:
-                        record_count = len(device_data['records'])
-                        print(f"[READ] Gerät {address} hat {record_count} records")
-                    elif 'data' in device_data and 'records' in device_data['data']:
-                        # mbus_cli_simple.py Format: data.records
-                        record_count = len(device_data['data']['records'])
-                        # Flache Struktur für MQTT Publisher erstellen
-                        device_data['records'] = device_data['data']['records']
-                        print(f"[READ] Gerät {address} hat {record_count} records (aus data.records)")
-                    elif 'data' in device_data and isinstance(device_data['data'], dict) and 'records' in device_data['data']:
-                        # pyMeterBus original Format
-                        record_count = len(device_data['data']['records'])
-                        # Für MQTT Publisher kompatibel machen
+                    if device_data:
+                        devices_read += 1
+                        # Zeitstempel für nächstes Poll-Intervall aktualisieren
+                        self.devices[address]['last_read_timestamp'] = current_time
+                        
+                        # Debug: JSON-Struktur ausgeben
+                        print(f"[READ] Gerät {address} JSON-Keys: {list(device_data.keys())}")
+                        
+                        # Daten zu Home Assistant senden
+                        self._publish_mqtt('publish_device_data', address, device_data)
+                        
+                        # Messwerte zählen (verschiedene CLI Formate unterstützen)
+                        record_count = 0
+                        if 'records' in device_data:
+                            record_count = len(device_data['records'])
+                            print(f"[READ] Gerät {address} hat {record_count} records")
+                        elif 'data' in device_data and 'records' in device_data['data']:
+                            # mbus_cli_simple.py Format: data.records
+                            record_count = len(device_data['data']['records'])
+                            # Flache Struktur für MQTT Publisher erstellen
+                            device_data['records'] = device_data['data']['records']
+                            print(f"[READ] Gerät {address} hat {record_count} records (aus data.records)")
+                        elif 'data' in device_data and isinstance(device_data['data'], dict) and 'records' in device_data['data']:
+                            # pyMeterBus original Format
+                            record_count = len(device_data['data']['records'])
+                            # Für MQTT Publisher kompatibel machen
                         device_data['records'] = device_data['data']['records']
                         print(f"[READ] Gerät {address} hat {record_count} records (pyMeterBus Format)")
                     elif 'data' in device_data:
@@ -487,12 +522,12 @@ class MBusGatewayService:
         
         # Read Cycle Status
         read_duration = time.time() - read_start
-        print(f"[READ] Zyklus abgeschlossen: {successful_reads}/{len(self.devices)} erfolgreich (Zeit: {read_duration:.2f}s)")
+        print(f"[READ] Zyklus abgeschlossen: {devices_read}/{len(self.devices)} erfolgreich (Zeit: {read_duration:.2f}s)")
         
         # Gateway Status Update
         self._publish_mqtt('update_gateway_status', {
             "last_read": datetime.now().isoformat(),
-            "successful_reads": successful_reads,
+            "successful_reads": devices_read,
             "total_devices": len(self.devices),
             "read_duration": round(read_duration, 2)
         })
@@ -521,7 +556,7 @@ class MBusGatewayService:
         print("[DISCOVERY] Discovery Thread beendet")
     
     def reading_loop(self):
-        """Reading Thread - läuft jede Minute"""
+        """Reading Thread - prüft kontinuierlich welche Geräte gelesen werden müssen"""
         print("[READING] Reading Thread gestartet")
         
         # Kurze Wartezeit für System-Initialisierung
@@ -545,16 +580,19 @@ class MBusGatewayService:
         else:
             print(f"[READING] {len(self.devices)} Geräte verfügbar, starte Reading-Loop")
         
+        # Check-Intervall für Poll-Intervalle (30 Sekunden)
+        check_interval = 30.0
+        
         while not self.shutdown_event.is_set():
             try:
-                # Daten von allen Geräten lesen
+                # Prüfe welche Geräte gelesen werden müssen
                 if self.devices:
                     self.read_all_devices()
                 else:
                     print("[READING] Keine Geräte verfügbar, überspringe Reading")
                 
-                # Warte 1 Minute oder bis Shutdown
-                if self.shutdown_event.wait(self.read_interval):
+                # Warte 30 Sekunden oder bis Shutdown
+                if self.shutdown_event.wait(check_interval):
                     break  # Shutdown angefordert
                 
             except Exception as e:
