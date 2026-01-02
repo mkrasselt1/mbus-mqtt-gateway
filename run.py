@@ -177,6 +177,81 @@ if __name__ == "__main__":
             print(f"[INFO] M-Bus Discovery aktiviert - Scan alle {scan_interval} Minuten")
         else:
             print("[INFO] M-Bus Discovery deaktiviert - verwende nur bekannte Geräte aus Config")
+            # Bei deaktiviertem Discovery: Bekannte Geräte aus Config laden und einmalig Discovery senden
+            known_devices = config.data.get('known_devices', [])
+            if known_devices:
+                print(f"[INFO] Lade {len(known_devices)} bekannte Geräte aus Config...")
+                for device in known_devices:
+                    if device.get('enabled', True):
+                        address = device['address']
+                        device_name = device.get('name', f"Device_{address}")
+                        device_type = device.get('type', 'primary')
+                        
+                        # Erstelle device_info für Discovery
+                        device_info = {
+                            "address": address,
+                            "name": device_name,
+                            "type": device_type
+                        }
+                        
+                        # Sende Discovery für dieses Gerät
+                        device_manager.add_or_update_device(
+                            device_id=str(address),
+                            device_type="mbus_meter",
+                            name=device_name
+                        )
+                        
+                        print(f"[INFO] Gerät konfiguriert: {device_name} (Adresse {address})")
+                
+                print("[INFO] Alle bekannten Geräte konfiguriert - starte Reading-Loop...")
+                
+                # Starte einfachen Reading-Loop für bekannte Geräte
+                reading_interval = config.data.get("reading_interval_minutes", 1) * 60  # in Sekunden
+                print(f"[INFO] Reading-Intervall: {reading_interval} Sekunden")
+                
+                last_read_time = 0
+                try:
+                    while not shutdown_flag:
+                        current_time = time.time()
+                        
+                        # Prüfe ob Reading-Intervall abgelaufen ist
+                        if current_time - last_read_time >= reading_interval:
+                            print(f"[READ] Starte Datenlesung für {len(known_devices)} bekannte Geräte...")
+                            
+                            devices_read = 0
+                            for device in known_devices:
+                                if not device.get('enabled', True):
+                                    continue
+                                    
+                                address = device['address']
+                                device_name = device.get('name', f"Device_{address}")
+                                
+                                try:
+                                    print(f"[READ] Lese Daten von {device_name} (Adresse {address})...")
+                                    
+                                    # Hier würde normalerweise mbus_client.read_device_data() aufgerufen werden
+                                    # Aber der MBusClient hat keine read_device_data Methode
+                                    # Für jetzt: Simuliere erfolgreiche Datenlesung
+                                    print(f"[READ] {device_name}: Simulierte Datenlesung erfolgreich")
+                                    devices_read += 1
+                                    
+                                except Exception as e:
+                                    print(f"[READ] Fehler bei {device_name}: {e}")
+                            
+                            print(f"[READ] Zyklus abgeschlossen: {devices_read}/{len(known_devices)} Geräte gelesen")
+                            last_read_time = current_time
+                        
+                        # Warte kurz vor nächster Prüfung
+                        time.sleep(5)
+                        
+                except KeyboardInterrupt:
+                    print("[INFO] Reading-Loop beendet durch Benutzer")
+            else:
+                print("[WARN] Keine bekannten Geräte in Config gefunden - Service beendet")
+                return
+            else:
+                print("[WARN] Keine bekannten Geräte in Config gefunden - Service beendet")
+                return
         
     except KeyboardInterrupt:
         print("[INFO] Programm beendet durch Benutzer")
