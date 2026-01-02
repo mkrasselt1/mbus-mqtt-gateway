@@ -297,7 +297,6 @@ if __name__ == "__main__":
                     print("[INFO] Reading-Loop beendet durch Benutzer")
             else:
                 print("[WARN] Keine bekannten Geräte in Config gefunden - Service beendet")
-                return
         
     except KeyboardInterrupt:
         print("[INFO] Programm beendet durch Benutzer")
