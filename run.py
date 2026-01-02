@@ -8,6 +8,7 @@ import sys
 import time
 import threading
 import logging
+import os
 
 # Logging für M-Bus Library konfigurieren
 logging.getLogger('meterbus').setLevel(logging.WARNING)
