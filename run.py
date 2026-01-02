@@ -242,9 +242,9 @@ if __name__ == "__main__":
                                     
                                     cli_args = [
                                         sys.executable, cli_tool,
-                                        "read",
                                         "--port", config.data["mbus_port"],
                                         "--baudrate", str(baudrate),
+                                        "read",
                                         "--address", str(address)
                                     ]
                                     
