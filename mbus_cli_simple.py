@@ -110,8 +110,17 @@ def extract_frame_data(frame):
             else:
                 unit = str(unit)
             
+            # Wert für JSON-Serialisierung konvertieren
+            value = rec.value
+            try:
+                # Versuche Decimal oder andere numerische Typen in float umzuwandeln
+                value = float(value)
+            except (ValueError, TypeError):
+                # Bei nicht-numerischen Werten (z.B. Strings, Datumsangaben) als String belassen
+                value = str(value)
+            
             recs.append({
-                'value': float(rec.value),  # Decimal in float umwandeln für JSON-Serialisierung
+                'value': value,
                 'unit': unit
             })
         
