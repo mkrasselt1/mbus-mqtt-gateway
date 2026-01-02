@@ -268,12 +268,29 @@ if __name__ == "__main__":
                                                 device_data["primary_address"] = address
                                                 device_data["device_type"] = device.get("type", "primary")
                                                 
-                                                # Daten zu MQTT senden
+                                                # Daten zu MQTT senden (verschiedene CLI Formate unterstützen)
                                                 if mqtt_client and hasattr(mqtt_client, 'publish_device_data'):
-                                                    mqtt_client.publish_device_data(address, device_data)
+                                                    # Verschiedene CLI Formate normalisieren
+                                                    normalized_data = device_data.copy()
+                                                    
+                                                    # mbus_cli_simple.py Format: data.records -> records
+                                                    if 'data' in device_data and 'records' in device_data['data']:
+                                                        normalized_data['records'] = device_data['data']['records']
+                                                        # Weitere Felder aus data übernehmen falls vorhanden
+                                                        for key in ['manufacturer', 'identification', 'access_no', 'medium']:
+                                                            if key in device_data['data']:
+                                                                normalized_data[key] = device_data['data'][key]
+                                                    
+                                                    mqtt_client.publish_device_data(address, normalized_data)
                                                 
-                                                records = device_data.get("records", [])
-                                                print(f"[READ] {device_name}: ✅ {len(records)} Messwerte gelesen")
+                                                # Records für Status-Ausgabe zählen
+                                                record_count = 0
+                                                if 'records' in device_data:
+                                                    record_count = len(device_data['records'])
+                                                elif 'data' in device_data and 'records' in device_data['data']:
+                                                    record_count = len(device_data['data']['records'])
+                                                
+                                                print(f"[READ] {device_name}: ✅ {record_count} Messwerte gelesen")
                                                 devices_read += 1
                                             else:
                                                 print(f"[READ] {device_name}: ❌ CLI erfolglos")

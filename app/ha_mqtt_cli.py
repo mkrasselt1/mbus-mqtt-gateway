@@ -235,7 +235,7 @@ class HomeAssistantMQTT:
                 if value is not None:
                     topic_name = self._map_record_to_topic(record, i)
                     if topic_name:  # Nur wenn topic_name nicht None ist
-                        sensor_name = self._get_sensor_name_from_topic(topic_name, unit, function_field)
+                        sensor_name = self._get_sensor_name_from_topic(topic_name, unit, function_field, i)
                         device_class = self._get_device_class_from_topic(topic_name)
                         state_class = self._get_state_class_from_topic(topic_name, value)  # Wert für negative Energie-Prüfung
                         icon = self._get_icon_from_topic(topic_name)
@@ -296,7 +296,7 @@ class HomeAssistantMQTT:
         except Exception as e:
             print(f"[HA-MQTT] Dynamische Discovery Fehler für {device_id}: {e}")
     
-    def _get_sensor_name_from_topic(self, topic_name: str, unit: str, function_field: str) -> str:
+    def _get_sensor_name_from_topic(self, topic_name: str, unit: str, function_field: str, record_index: int) -> str:
         """Mappt Topic-Namen zu benutzerfreundlichen Sensor-Namen"""
         name_map = {
             "energy": "Energy",
@@ -304,7 +304,8 @@ class HomeAssistantMQTT:
             "voltage": "Voltage",
             "current": "Current"
         }
-        return name_map.get(topic_name, function_field or topic_name.title())
+        base_name = name_map.get(topic_name, function_field or topic_name.title())
+        return f"{base_name} Record {record_index + 1}"
     
     def _get_device_class_from_topic(self, topic_name: str) -> Optional[str]:
         """Mappt Topic-Namen zu Home Assistant Device Classes"""
@@ -346,6 +347,33 @@ class HomeAssistantMQTT:
             "current": "mdi:current-ac"
         }
         return icon_map.get(topic_name, "mdi:gauge")
+    
+    def _get_sensor_name_from_topic(self, topic_name: str, unit: str, function_field: str) -> str:
+        """Mappt Topic-Namen zu benutzerfreundlichen Sensor-Namen"""
+        name_map = {
+            "energy": "Energy",
+            "power": "Power", 
+            "voltage": "Voltage",
+            "current": "Current"
+        }
+        
+        # Basis-Name aus Topic
+        base_name = name_map.get(topic_name, topic_name.title())
+        
+        # Bei gleichen Einheiten: Zusätzliche Info aus function_field hinzufügen
+        if function_field and function_field.strip():
+            # Vereinfachte function field Info
+            func_lower = function_field.lower()
+            if "forward" in func_lower or "import" in func_lower:
+                base_name += " Import"
+            elif "reverse" in func_lower or "export" in func_lower:
+                base_name += " Export"
+            elif "total" in func_lower:
+                base_name += " Total"
+            elif "current" in func_lower and topic_name != "current":
+                base_name += " Current"
+        
+        return base_name
     
     def _normalize_unit_for_home_assistant(self, unit: str, topic_name: str) -> str:
         """Normalisiert Units für Home Assistant Kompatibilität"""
