@@ -226,6 +226,56 @@ class HomeAssistantMQTT:
         
         return clean_name
     
+    def _normalize_unit_for_ha(self, unit: str) -> str:
+        """Normalisiert Einheiten für Home Assistant Standards"""
+        if not unit:
+            return unit
+        
+        unit_lower = unit.lower().strip()
+        
+        # Temperatur-Einheiten
+        if unit_lower == "c" or unit_lower == "celsius":
+            return "°C"
+        elif unit_lower == "k" or unit_lower == "kelvin":
+            return "K"
+        elif unit_lower == "f" or unit_lower == "fahrenheit":
+            return "°F"
+        
+        # Volumen mit Hochzeichen normalisieren
+        if "m^3" in unit_lower or "m3" in unit_lower:
+            return unit.replace("m^3", "m³").replace("m3", "m³")
+        
+        # Ansonsten original zurückgeben
+        return unit
+    
+    def _convert_to_iso8601(self, datetime_str: str) -> str:
+        """Konvertiert datetime-String zu ISO 8601 mit lokaler Zeitzone"""
+        from datetime import datetime, timezone
+        import time
+        
+        try:
+            # Parse das M-Bus datetime Format: "2026-01-03T13:11"
+            if isinstance(datetime_str, str):
+                # Füge Sekunden hinzu falls nicht vorhanden
+                if len(datetime_str) == 16:  # Format: YYYY-MM-DDTHH:MM
+                    datetime_str += ":00"
+                
+                # Parse zu datetime object
+                dt = datetime.fromisoformat(datetime_str)
+                
+                # Füge lokale Zeitzone hinzu
+                local_offset = time.timezone if time.daylight == 0 else time.altzone
+                tz_hours = -local_offset // 3600
+                tz_mins = (-local_offset % 3600) // 60
+                
+                # Formatiere mit Zeitzone: 2026-01-03T13:11:00+01:00
+                return f"{dt.strftime('%Y-%m-%dT%H:%M:%S')}{tz_hours:+03d}:{tz_mins:02d}"
+            
+            return str(datetime_str)
+        except Exception as e:
+            print(f"[WARN] Datetime-Konvertierung fehlgeschlagen: {e}")
+            return str(datetime_str)
+    
     def _generate_discovery_config(self, device: Device, attribute_name: str) -> Optional[Dict]:
         """Generiert Home Assistant Discovery Config für ein Geräte-Attribut"""
         attribute = device.attributes.get(attribute_name)
@@ -241,8 +291,16 @@ class HomeAssistantMQTT:
             "sw_version": device.sw_version
         }
         
-        # Object ID für eindeutige Identifizierung (MQTT-kompatibel)
-        safe_attr_name = attribute_name.replace(" ", "_").replace("(", "").replace(")", "").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").lower()
+        # Object ID für eindeutige Identifizierung (MQTT-kompatibel - nur alphanumerisch und Unterstriche)
+        # Schritt 1: Sonderzeichen ersetzen
+        safe_attr_name = attribute_name.replace("^", "").replace("/", "_").replace("³", "3").replace("°", "")
+        safe_attr_name = safe_attr_name.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+        # Schritt 2: Klammern und Leerzeichen entfernen
+        safe_attr_name = safe_attr_name.replace("(", "").replace(")", "").replace(" ", "_")
+        # Schritt 3: Nur alphanumerische Zeichen und Unterstriche behalten
+        safe_attr_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in safe_attr_name)
+        # Schritt 4: Mehrfache Unterstriche zu einem reduzieren und lowercase
+        safe_attr_name = '_'.join(filter(None, safe_attr_name.split('_'))).lower()
         object_id = f"{device.device_id}_{safe_attr_name}"
         
         # Component Type basierend auf Attribut-Typ bestimmen
@@ -257,7 +315,7 @@ class HomeAssistantMQTT:
         
         # Discovery Config
         config = {
-            "name": self._get_friendly_sensor_name(attribute_name, attribute.unit),
+            "name": attribute_name,  # Verwende den vollen Namen mit Index (z.B. "Energie Bezug (Wh)_1")
             "unique_id": object_id,
             "state_topic": state_topic,
             "device": device_info,
@@ -282,7 +340,9 @@ class HomeAssistantMQTT:
         
         # Unit of measurement hinzufügen wenn vorhanden
         if attribute.unit and attribute.unit.lower() != "none":
-            config["unit_of_measurement"] = attribute.unit
+            # Normalisiere Einheiten für Home Assistant
+            normalized_unit = self._normalize_unit_for_ha(attribute.unit)
+            config["unit_of_measurement"] = normalized_unit
         
         # Device Class und Icon basierend auf Name/Unit setzen
         self._add_device_class_and_icon(config, attribute_name, attribute.unit)
@@ -344,6 +404,11 @@ class HomeAssistantMQTT:
         # Uptime
         elif "uptime" in attr_lower:
             config["icon"] = "mdi:clock"
+        
+        # Timestamp/DateTime
+        elif "date" in attr_lower or "time" in attr_lower or unit_lower in ["date time", "datetime"]:
+            config["device_class"] = "timestamp"
+            config["icon"] = "mdi:clock-outline"
         
         # Default
         else:
@@ -436,6 +501,10 @@ class HomeAssistantMQTT:
             
             # Direkten Wert (nicht JSON) senden mit RETAIN
             try:
+                # Datetime-Werte in ISO 8601 mit Zeitzone konvertieren
+                if attribute.unit and attribute.unit.lower() in ["date time", "datetime"]:
+                    value = self._convert_to_iso8601(value)
+                
                 if isinstance(value, (str, int, float)):
                     payload = str(value)
                 else:

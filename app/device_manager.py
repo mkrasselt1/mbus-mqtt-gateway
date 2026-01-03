@@ -235,9 +235,9 @@ class DeviceManager:
             return f"Phasenwinkel ({unit})"
         
         # Volumetrische Einheiten
-        elif unit_lower in ["m³", "m3", "l", "liter"]:
+        elif unit_lower in ["m³", "m3", "m^3", "l", "liter"]:
             return f"Volumen ({unit})"
-        elif unit_lower in ["m³/h", "m3/h", "l/h", "l/min"]:
+        elif unit_lower in ["m³/h", "m3/h", "m^3/h", "l/h", "l/min"]:
             return f"Durchfluss ({unit})"
         
         # Temperatur
