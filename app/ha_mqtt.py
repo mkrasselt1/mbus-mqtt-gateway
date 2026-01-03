@@ -385,12 +385,14 @@ class HomeAssistantMQTT:
             config["device_class"] = "current"
             config["icon"] = "mdi:current-ac"
         
-        # Volume
-        elif "volumen" in attr_lower or "volume" in attr_lower or unit_lower in ["m³", "l", "m3"]:
+        # Volume (Gas/Water)
+        elif "volumen" in attr_lower or "volume" in attr_lower or "m³" in unit_lower or "m3" in unit_lower:
+            config["device_class"] = "gas"  # oder "water" - beide funktionieren für m³
+            config["state_class"] = "total_increasing"
             config["icon"] = "mdi:gauge"
         
-        # Flow rate
-        elif "strom" in attr_lower or "flow" in attr_lower or "m³/h" in unit_lower:
+        # Flow rate (Durchfluss)
+        elif "durchfluss" in attr_lower or "flow" in attr_lower or "m³/h" in unit_lower or "m3/h" in unit_lower or "l/h" in unit_lower:
             config["icon"] = "mdi:water-pump"
         
         # IP Address
