@@ -159,11 +159,14 @@ class DeviceManager:
         """Aktualisiert M-Bus Gerätedaten aus dem MBusClient"""
         device_id = f"mbus_meter_{address}"
         
+        # Name aus Config verwenden, falls vorhanden
+        device_name = data.get("device_name", f"M-Bus Meter {address}")
+        
         # Gerät hinzufügen/aktualisieren mit Metadaten
         device = self.add_or_update_device(
             device_id=device_id,
             device_type="mbus_meter",
-            name=f"M-Bus Meter {address}",
+            name=device_name,
             manufacturer=data.get("manufacturer", "Unknown"),
             model=data.get("medium", "Unknown"),
             sw_version=data.get("identification", "")
@@ -172,7 +175,14 @@ class DeviceManager:
         # Alle Records als Attribute hinzufügen
         records = data.get("records", [])
         for idx, record in enumerate(records):
-            attr_name = record.get("name", f"record_{idx}")
+            # Name aus Record oder generiere ihn aus der Einheit
+            base_name = record.get("name")
+            if not base_name:
+                unit = record.get("unit", "")
+                base_name = self._get_sensor_name_from_unit(unit, idx)
+            
+            # Immer Index anhängen für eindeutige Namen
+            attr_name = f"{base_name}_{idx}"
             value = record.get("value", 0)
             unit = record.get("unit", "")
             
@@ -190,6 +200,61 @@ class DeviceManager:
                 print(f"[WARN] MQTT State Update fehlgeschlagen für {device_id}: {e}")
         
         print(f"[INFO] M-Bus Gerät {device_id} aktualisiert mit {len(records)} Attributen")
+    
+    def _get_sensor_name_from_unit(self, unit: str, index: int) -> str:
+        """
+        Generiert aussagekräftigen Sensor-Namen basierend auf der Einheit.
+        """
+        if not unit or unit.lower() == "none":
+            return f"Zählerstand {index}"
+        
+        unit_lower = unit.lower()
+        
+        # Energie-Einheiten
+        if unit_lower in ["kwh", "wh", "mwh", "gwh"]:
+            return f"Energie Bezug ({unit})"
+        elif unit_lower in ["kvarh", "varh"]:
+            return f"Blindenergie ({unit})"
+        
+        # Leistungs-Einheiten
+        elif unit_lower in ["w", "kw", "mw", "gw"]:
+            return f"Wirkleistung ({unit})"
+        elif unit_lower in ["var", "kvar", "mvar"]:
+            return f"Blindleistung ({unit})"
+        elif unit_lower in ["va", "kva", "mva"]:
+            return f"Scheinleistung ({unit})"
+        
+        # Elektrische Größen
+        elif unit_lower in ["v", "kv", "mv"]:
+            return f"Spannung ({unit})"
+        elif unit_lower in ["a", "ma", "ka"]:
+            return f"Strom ({unit})"
+        elif unit_lower in ["hz", "khz"]:
+            return f"Frequenz ({unit})"
+        elif unit_lower in ["°", "deg", "degree"]:
+            return f"Phasenwinkel ({unit})"
+        
+        # Volumetrische Einheiten
+        elif unit_lower in ["m³", "m3", "l", "liter"]:
+            return f"Volumen ({unit})"
+        elif unit_lower in ["m³/h", "m3/h", "l/h", "l/min"]:
+            return f"Durchfluss ({unit})"
+        
+        # Temperatur
+        elif unit_lower in ["°c", "c", "celsius", "k", "kelvin"]:
+            return f"Temperatur ({unit})"
+        
+        # Druck
+        elif unit_lower in ["bar", "mbar", "pa", "kpa", "mpa"]:
+            return f"Druck ({unit})"
+        
+        # Zeit
+        elif unit_lower in ["s", "min", "h", "d"]:
+            return f"Zeit ({unit})"
+        
+        # Fallback: Einheit als Name verwenden
+        else:
+            return f"Messwert ({unit})"
     
     def set_device_offline(self, device_id: str):
         """Markiert ein Gerät als offline"""
