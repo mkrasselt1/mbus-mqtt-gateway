@@ -53,11 +53,17 @@ def setup_app_logging():
     
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
     os.makedirs(log_dir, exist_ok=True)
-    
-    # Logging immer in Datei mit UTF-8 Encoding!
-    handlers = [
-        logging.FileHandler(os.path.join(log_dir, 'gateway.log'), encoding='utf-8')
-    ]
+    from logging.handlers import TimedRotatingFileHandler
+    # Tägliche Rotation, maximal 5 Dateien behalten
+    file_handler = TimedRotatingFileHandler(
+        os.path.join(log_dir, 'gateway.log'),
+        when='midnight',
+        interval=1,
+        backupCount=5,
+        encoding='utf-8',
+        utc=True
+    )
+    handlers = [file_handler]
     
     # Als Service: Nur File-Handler
     # In Konsole: Zusätzlich StreamHandler für Debugging
