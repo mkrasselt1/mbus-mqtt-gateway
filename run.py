@@ -231,7 +231,7 @@ if __name__ == "__main__":
                                     cli_args,
                                     capture_output=True,
                                     text=True,
-                                    timeout=15,
+                                    timeout=5,
                                     cwd=os.path.dirname(os.path.abspath(__file__))
                                 )
                                 if result.returncode == 0:
