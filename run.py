@@ -187,35 +187,39 @@ if __name__ == "__main__":
             cli_tool = "mbus_cli_original.py" if use_cli_v2 else "mbus_cli_simple.py"
             log_or_print(f"Verwende CLI Tool: {cli_tool}")
             
-            # Starte Reading-Loop für bekannte Geräte in separatem Thread
-            def read_known_devices():
+            # Starte individuellen Scheduler-Thread für Geräte-Polling
+            def device_poll_scheduler():
                 import subprocess
                 import json
-                
-                reading_interval = config.data.get("reading_interval_minutes", 1) * 60  # in Sekunden
-                log_or_print(f"Reading-Intervall: {reading_interval} Sekunden")
-                log_or_print("Starte Reading-Loop für bekannte Geräte...")
-                
-                last_read_time = 0
+                # Discovery-Intervall als Fallback
+                discovery_interval = config.data.get("mbus_scan_interval_minutes", 60) * 60
+                log_or_print("Starte individuellen Geräte-Polling-Scheduler...")
+                # Für jedes Gerät: Zeitstempel des letzten Polls
+                last_poll_times = {}
+                # Lock für parallele CLI-Aufrufe verhindern
+                poll_lock = threading.Lock()
                 while not shutdown_flag:
                     current_time = time.time()
-                    
-                    # Prüfe ob Reading-Intervall abgelaufen ist
-                    if current_time - last_read_time >= reading_interval:
-                        log_or_print(f"Starte Datenlesung für {len(enabled_devices)} Geräte...")
-                        
-                        devices_read = 0
-                        for device in enabled_devices:
-                            if shutdown_flag:
-                                break
-                                
-                            address = device['address']
-                            device_name = device.get('name', f"Device_{address}")
-                            baudrate = device.get('baudrate', config.data.get('mbus_baudrate', 9600))
-                            
+                    for device in enabled_devices:
+                        address = device['address']
+                        device_name = device.get('name', f"Device_{address}")
+                        baudrate = device.get('baudrate', config.data.get('mbus_baudrate', 9600))
+                        # Intervall bestimmen: Sekunden > Minuten > Discovery
+                        poll_interval = None
+                        if 'poll_interval_seconds' in device:
+                            poll_interval = device['poll_interval_seconds']
+                        elif 'poll_interval_minutes' in device:
+                            poll_interval = device['poll_interval_minutes'] * 60
+                        else:
+                            poll_interval = discovery_interval
+                        # Letzter Poll für dieses Gerät
+                        last_poll = last_poll_times.get(address, 0)
+                        if current_time - last_poll >= poll_interval:
+                            # Versuche Lock zu bekommen, damit keine Überschneidung
+                            if not poll_lock.acquire(blocking=False):
+                                continue  # Ein anderer Poll läuft noch
                             try:
                                 log_or_print(f"Lese {device_name} (Adresse {address})...", 'debug')
-                                
                                 cli_args = [
                                     sys.executable, cli_tool,
                                     "--port", config.data["mbus_port"],
@@ -223,7 +227,6 @@ if __name__ == "__main__":
                                     "read",
                                     "--address", str(address)
                                 ]
-                                
                                 result = subprocess.run(
                                     cli_args,
                                     capture_output=True,
@@ -231,15 +234,13 @@ if __name__ == "__main__":
                                     timeout=15,
                                     cwd=os.path.dirname(os.path.abspath(__file__))
                                 )
-                                
                                 if result.returncode == 0:
                                     try:
                                         device_data = json.loads(result.stdout)
                                         if device_data.get("success"):
-                                            # Daten über DeviceManager verarbeiten
                                             if 'data' in device_data and 'records' in device_data['data']:
                                                 normalized_data = {
-                                                    'device_name': device_name,  # Name aus Config
+                                                    'device_name': device_name,
                                                     'manufacturer': device_data['data'].get('manufacturer', 'Unknown'),
                                                     'identification': device_data['data'].get('identification', ''),
                                                     'access_no': device_data['data'].get('access_no', 0),
@@ -248,17 +249,13 @@ if __name__ == "__main__":
                                                 }
                                             elif 'records' in device_data:
                                                 normalized_data = device_data.copy()
-                                                normalized_data['device_name'] = device_name  # Name aus Config
+                                                normalized_data['device_name'] = device_name
                                             else:
                                                 normalized_data = None
-                                            
                                             if normalized_data and 'records' in normalized_data:
-                                                # Device Manager aktualisieren (sendet automatisch MQTT)
                                                 device_manager.update_mbus_device_data(address, normalized_data)
-                                                
                                                 record_count = len(normalized_data['records'])
                                                 log_or_print(f"{device_name}: [OK] {record_count} Messwerte")
-                                                devices_read += 1
                                             else:
                                                 log_or_print(f"{device_name}: [FAIL] Keine Records gefunden", 'warning')
                                         else:
@@ -269,21 +266,18 @@ if __name__ == "__main__":
                                     log_or_print(f"{device_name}: [ERROR] CLI Fehler (Exit: {result.returncode})", 'error')
                                     if result.stderr:
                                         log_or_print(f"STDERR: {result.stderr[:200]}", 'error')
-                                
+                                last_poll_times[address] = current_time
                             except subprocess.TimeoutExpired:
                                 log_or_print(f"{device_name}: [ERROR] Timeout (15s)", 'error')
                             except Exception as e:
                                 log_or_print(f"{device_name}: [ERROR] Fehler: {e}", 'error')
-                        
-                        log_or_print(f"Zyklus abgeschlossen: {devices_read}/{len(enabled_devices)} erfolgreich")
-                        last_read_time = current_time
-                    
-                    # Warte kurz vor nächster Prüfung
-                    time.sleep(5)
-            
-            # Reading-Thread starten
-            reading_thread = threading.Thread(target=read_known_devices, name="Known-Devices-Reading", daemon=True)
-            reading_thread.start()
+                            finally:
+                                poll_lock.release()
+                    # Kurze Pause, damit schnelle Geräte nicht ausgebremst werden
+                    time.sleep(1)
+            # Scheduler-Thread starten
+            scheduler_thread = threading.Thread(target=device_poll_scheduler, name="Device-Poll-Scheduler", daemon=True)
+            scheduler_thread.start()
         else:
             log_or_print("Keine aktivierten Geräte in Config gefunden")
         
