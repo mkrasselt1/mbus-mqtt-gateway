@@ -5,3 +5,5 @@ lib/
 pyvenv.cfg
 lib64
 config.json
+nssm.exe
+logs/

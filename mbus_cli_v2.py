@@ -6,15 +6,15 @@ Basiert auf dem funktionierenden pyMeterBus GitHub Code
 
 import argparse
 import json
-import serial
 import sys
 import time
 from datetime import datetime
 
 try:
+    from serial import serial_for_url, SerialException
     import meterbus
-except ImportError:
-    print("ERROR: meterbus library nicht gefunden. Installiere mit: pip install pyMeterBus", file=sys.stderr)
+except ImportError as e:
+    print(f"ERROR: Benötigte Library nicht gefunden: {e}. Installiere mit: pip install pyMeterBus pyserial", file=sys.stderr)
     sys.exit(1)
 
 
@@ -65,12 +65,23 @@ class MBusCLI_V2:
         self.baudrate = baudrate
         self.found_devices = []
     
+    def _format_port(self, port):
+        """Formatiert Port für serial_for_url (konvertiert IP:Port zu socket://IP:Port)"""
+        if not isinstance(port, str):
+            return port
+        if '://' in port:
+            return port
+        if ':' in port and not port.upper().startswith('COM') and not port.startswith('/'):
+            return f"socket://{port}"
+        return port
+    
     def test_connection(self):
         """Testet die M-Bus Verbindung mit meterbus Library"""
         print(f"[INFO] Teste M-Bus Verbindung zu {self.port} (Baudrate: {self.baudrate})", file=sys.stderr)
+        port = self._format_port(self.port)
         
         try:
-            with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
+            with serial_for_url(port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
                 print(f"[DEBUG] M-Bus Port geöffnet: {ser.name}", file=sys.stderr)
                 
                 # Test mit ADDRESS_NETWORK_LAYER ping (wie im GitHub Code)
@@ -113,9 +124,10 @@ class MBusCLI_V2:
         
         scan_start = time.time()
         devices = []
+        port = self._format_port(self.port)
         
         try:
-            with serial.serial_for_url(self.port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
+            with serial_for_url(port, self.baudrate, 8, 'E', 1, timeout=1) as ser:
                 print(f"[DEBUG] M-Bus Serial geöffnet: {ser.name}", file=sys.stderr)
                 
                 # 1. Initialisiere Slaves (aus GitHub pyMeterBus Code)
@@ -275,9 +287,10 @@ class MBusCLI_V2:
         print(f"[INFO] Lese M-Bus Daten von {address_or_id}", file=sys.stderr)
         
         read_start = time.time()
+        port = self._format_port(self.port)
         
         try:
-            with serial.Serial(self.port, self.baudrate, parity='E', stopbits=1, timeout=2.0) as ser:
+            with serial_for_url(port, self.baudrate, parity='E', stopbits=1, timeout=2.0) as ser:
                 
                 if isinstance(address_or_id, str) and len(address_or_id) >= 16:
                     # Sekundäradresse - SELECT Frame senden
@@ -634,11 +647,16 @@ def json_serializer(obj):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='M-Bus CLI Tool V2 (meterbus Library)')
+    parser = argparse.ArgumentParser(
+        description='M-Bus CLI Tool V2 (meterbus Library)',
+        epilog='Beispiele:\n'
+               '  Serial: --port COM3 oder --port /dev/ttyUSB0\n'
+               '  TCP/IP: --port 192.168.1.100:8899',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('command', choices=['test', 'scan', 'read'], 
                        help='Auszuführender Befehl')
     parser.add_argument('--port', required=True, 
-                       help='Serieller Port (z.B. /dev/ttyAMA0)')
+                       help='Serieller Port (COM3, /dev/ttyUSB0) oder TCP (192.168.1.100:8899)')
     parser.add_argument('--baudrate', type=int, default=9600,
                        help='Baudrate (Standard: 9600)')
     parser.add_argument('--address', 

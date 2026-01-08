@@ -20,22 +20,56 @@ except ImportError as e:
 class MBusClient:
     def __init__(self, port, baudrate=2400, mqtt_client=None, debug=False):
         """
-        Initialize the M-Bus client with the given serial port and baudrate.
-        :param port: Serial port where the M-Bus master is connected (e.g., '/dev/ttyUSB0').
+        Initialize the M-Bus client with the given serial port or TCP connection.
+        :param port: Serial port (e.g., 'COM3', '/dev/ttyUSB0') or TCP connection (e.g., '192.168.1.100:8899' or 'socket://192.168.1.100:8899').
+        :param baudrate: Baudrate for serial connections (ignored for TCP).
         :param debug: Enable debug output (default: False).
         """
-        self.port = port
+        self.port = self._format_port(port)
         self.baudrate = baudrate  # Baudrate als Instanzvariable speichern
         self.debug = debug
         self.devices = []  # List of detected M-Bus devices
         self.device_info = {}  # Dict to store device information
         self.device_manager = device_manager
+        self.is_tcp = self._is_tcp_connection(port)
         
-
-        
+        connection_type = "TCP/IP" if self.is_tcp else "Serial"
         if self.debug:
-            print(f"Initializing M-Bus client on port {self.port} with baudrate {self.baudrate}")
+            print(f"Initializing M-Bus client on {connection_type} port {self.port} with baudrate {self.baudrate}")
+    def _is_tcp_connection(self, port):
+        """
+        Prüft ob es sich um eine TCP-Verbindung handelt.
+        :param port: Port-String (z.B. 'COM3', '192.168.1.100:8899', 'socket://192.168.1.100:8899')
+        :return: True wenn TCP-Verbindung, sonst False
+        """
+        if not isinstance(port, str):
+            return False
+        port_lower = port.lower()
+        # Erkenne TCP-URLs (socket://, rfc2217://) oder IP:Port Format
+        return ('socket://' in port_lower or 
+                'rfc2217://' in port_lower or 
+                (':' in port and not port.startswith('/') and not port.upper().startswith('COM')))
 
+    def _format_port(self, port):
+        """
+        Formatiert den Port-String für serial_for_url.
+        Konvertiert IP:Port Format zu socket://IP:Port falls nötig.
+        :param port: Port-String
+        :return: Formatierter Port-String
+        """
+        if not isinstance(port, str):
+            return port
+        
+        # Wenn es bereits ein URL-Schema hat, nichts ändern
+        if '://' in port:
+            return port
+        
+        # Prüfe auf IP:Port Format (enthält : aber kein COM und beginnt nicht mit /)
+        if ':' in port and not port.upper().startswith('COM') and not port.startswith('/'):
+            # IP:Port zu socket://IP:Port konvertieren
+            return f"socket://{port}"
+        
+        return port
     def start_periodic_scan(self, interval_minutes):
         """
         Startet regelmäßiges Scannen nach neuen M-Bus Geräten im Hintergrund.

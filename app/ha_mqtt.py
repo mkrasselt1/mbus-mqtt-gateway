@@ -445,7 +445,7 @@ class HomeAssistantMQTT:
                         self.discovery_sent.add(discovery_key)
                         self.last_discovery_time[discovery_key] = time.time()
                     
-                    print(f"[MQTT] ✓ Discovery für {attr_name} erfolgreich")
+                    print(f"[MQTT] OK Discovery für {attr_name} erfolgreich")
                 else:
                     print(f"[MQTT] ✗ Discovery für {attr_name} FEHLGESCHLAGEN!")
                 
@@ -495,8 +495,12 @@ class HomeAssistantMQTT:
             # Robuste Decimal/Float Konvertierung für JSON Serialisierung
             value = self._ensure_json_serializable(value)
             
-            # MQTT-kompatiblen Attributnamen erstellen
-            safe_attr_name = attr_name.replace(" ", "_").replace("(", "").replace(")", "").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").lower()
+            # MQTT-kompatiblen Attributnamen erstellen (vollständige Sanitization)
+            safe_attr_name = attr_name.replace("^", "").replace("/", "_").replace("³", "3").replace("°", "")
+            safe_attr_name = safe_attr_name.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+            safe_attr_name = safe_attr_name.replace("(", "").replace(")", "").replace(" ", "_")
+            safe_attr_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in safe_attr_name)
+            safe_attr_name = '_'.join(filter(None, safe_attr_name.split('_'))).lower()
             
             # Separater State Topic für dieses Attribut
             state_topic = f"{self.topic_prefix}/device/{device.device_id}/{safe_attr_name}"
@@ -542,8 +546,12 @@ class HomeAssistantMQTT:
                     # Discovery Topic mit KONSISTENTER Object-ID-Generierung
                     component = "binary_sensor" if device.attributes[attr_name].value_type == "binary_sensor" else "sensor"
                     
-                    # GLEICHE Bereinigung wie in _generate_discovery_config
-                    safe_attr_name = attr_name.replace(" ", "_").replace("(", "").replace(")", "").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").lower()
+                    # GLEICHE Bereinigung wie in _generate_discovery_config (vollständige Sanitization)
+                    safe_attr_name = attr_name.replace("^", "").replace("/", "_").replace("³", "3").replace("°", "")
+                    safe_attr_name = safe_attr_name.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+                    safe_attr_name = safe_attr_name.replace("(", "").replace(")", "").replace(" ", "_")
+                    safe_attr_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in safe_attr_name)
+                    safe_attr_name = '_'.join(filter(None, safe_attr_name.split('_'))).lower()
                     object_id = f"{device.device_id}_{safe_attr_name}"
                     
                     discovery_topic = f"homeassistant/{component}/{object_id}/config"

@@ -11,18 +11,22 @@ This project is ideal for IoT setups where meter readings (e.g., water, gas, ele
 ## Features
 
 - **M-Bus to MQTT Gateway**: Reads data from M-Bus devices and sends it to an MQTT broker.
+- **Flexible Connectivity**: Supports both serial ports (COM/USB) and TCP/IP connections (Ethernet converters).
 - **Web Interface**: Configure MQTT broker details, M-Bus port settings, and view logs through a user-friendly web interface.
 - **Systemd Service**: Automatically starts the gateway as a systemd service on boot.
 - **One-Line Installer**: Simplified installation process with a single command.
+- **Cross-Platform**: Works on Windows and Linux systems.
 
 ---
 
 ## Installation
 
 ### Prerequisites
-- A Linux-based system (e.g., Ubuntu, Debian).
+- A Linux-based or Windows system.
 - Python 3.x installed on your system.
-- M-Bus device connected to the system (e.g., via `/dev/ttyUSB0`).
+- M-Bus device connected:
+  - **Serial**: via USB/COM port (e.g., `/dev/ttyUSB0` or `COM3`)
+  - **TCP/IP**: via Ethernet converter (e.g., Waveshare RS485 to PoE)
 - An MQTT broker (e.g., Mosquitto, AWS IoT, etc.) for publishing data.
 
 ### Installation Steps
@@ -75,8 +79,23 @@ The gateway runs as a systemd service. It automatically starts on boot. You can 
 1. Navigate to the web interface: `http://<your-server-ip>:5000`.
 2. Fill in the required fields for:
    - MQTT Broker Address
-   - MQTT Broker Port
-   - MQTT Topic
+   - MQTT Broke (see configuration options below)
+3. Click on "Save" to apply the changes.
+
+### M-Bus Connection Options
+
+The gateway supports multiple connection types:
+
+**Serial Connection:**
+- Windows: `COM3`, `COM4`, etc.
+- Linux: `/dev/ttyUSB0`, `/dev/ttyAMA0`, etc.
+
+**TCP/IP Connection (e.g., Waveshare RS485 to Ethernet):**
+- Simple format: `192.168.1.100:8899`
+- Explicit: `socket://192.168.1.100:8899`
+- RFC2217: `rfc2217://192.168.1.100:8899`
+
+📖 **Detailed TCP/IP Setup Guide**: See [TCP_SETUP.md](TCP_SETUP.md) for complete instructions on using Ethernet converter
    - M-Bus Port
 3. Click on "Save" to apply the changes.
 

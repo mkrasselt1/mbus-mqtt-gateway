@@ -236,9 +236,13 @@ class DeviceManager:
         
         # Volumetrische Einheiten
         elif unit_lower in ["m³", "m3", "m^3", "l", "liter"]:
-            return f"Volumen ({unit})"
+            # Normalisiere Unit für Display
+            normalized_unit = unit.replace("m^3", "m³").replace("m3", "m³")
+            return f"Volumen ({normalized_unit})"
         elif unit_lower in ["m³/h", "m3/h", "m^3/h", "l/h", "l/min"]:
-            return f"Durchfluss ({unit})"
+            # Normalisiere Unit für Display
+            normalized_unit = unit.replace("m^3/h", "m³/h").replace("m3/h", "m³/h")
+            return f"Durchfluss ({normalized_unit})"
         
         # Temperatur
         elif unit_lower in ["°c", "c", "celsius", "k", "kelvin"]:

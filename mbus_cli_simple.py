@@ -5,7 +5,6 @@ Verwendet die originale pyMeterBus Library ohne zusätzliche VIF-Skalierung
 """
 
 import argparse
-import serial
 import time
 import sys
 import json
@@ -13,8 +12,9 @@ from datetime import datetime
 
 try:
     import meterbus
-except ImportError:
-    print("meterbus library nicht gefunden!", file=sys.stderr)
+    from serial import serial_for_url, SerialException
+except ImportError as e:
+    print(f"Benötigte Library nicht gefunden: {e}", file=sys.stderr)
     sys.exit(1)
 
 def ping_address(ser, address, retries=5, read_echo=False):
@@ -30,13 +30,24 @@ def ping_address(ser, address, retries=5, read_echo=False):
         time.sleep(0.5)
     return False
 
+def format_port(port):
+    """Formatiert Port für serial_for_url (konvertiert IP:Port zu socket://IP:Port)"""
+    if not isinstance(port, str):
+        return port
+    if '://' in port:
+        return port
+    if ':' in port and not port.upper().startswith('COM') and not port.startswith('/'):
+        return f"socket://{port}"
+    return port
+
 def scan_primary_addresses(port, baudrate):
     """Scannt primäre M-Bus Adressen"""
     print("Scanne primäre M-Bus Adressen...", file=sys.stderr)
+    port = format_port(port)
     found_devices = []
     
     try:
-        with serial.Serial(port, baudrate, parity='E', stopbits=1, timeout=1) as ser:
+        with serial_for_url(port, baudrate, parity='E', stopbits=1, timeout=1) as ser:
             for address in range(0, meterbus.MAX_PRIMARY_SLAVES + 1):
                 if ping_address(ser, address, 3):
                     found_devices.append(address)
@@ -49,9 +60,10 @@ def scan_primary_addresses(port, baudrate):
 
 def read_device_data(port, baudrate, address):
     """Liest Daten von M-Bus Gerät - basierend auf pyMeterBus Beispiel"""
+    port = format_port(port)
     try:
         ibt = meterbus.inter_byte_timeout(baudrate)
-        with serial.Serial(port, baudrate, parity='E', stopbits=1, 
+        with serial_for_url(port, baudrate, parity='E', stopbits=1, 
                           inter_byte_timeout=ibt, timeout=1) as ser:
             
             frame = None
@@ -146,8 +158,15 @@ def extract_frame_data(frame):
         return None
 
 def main():
-    parser = argparse.ArgumentParser(description='Einfaches M-Bus CLI basierend auf pyMeterBus')
-    parser.add_argument('--port', required=True, help='Serial port (z.B. /dev/ttyAMA0)')
+    parser = argparse.ArgumentParser(
+        description='Einfaches M-Bus CLI basierend auf pyMeterBus',
+        epilog='Beispiele:\n'
+               '  Serial: --port COM3 oder --port /dev/ttyUSB0\n'
+               '  TCP/IP: --port 192.168.1.100:8899\n'
+               '  Explizit: --port socket://192.168.1.100:8899',
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument('--port', required=True, 
+                       help='Serial port (COM3, /dev/ttyUSB0) oder TCP (192.168.1.100:8899)')
     parser.add_argument('--baudrate', type=int, default=9600, help='Baudrate')
     
     subparsers = parser.add_subparsers(dest='command', help='Verfügbare Kommandos')

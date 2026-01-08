@@ -3,16 +3,21 @@ from app.mbus import MBusClient
 from app.config import Config
 from app.device_manager import device_manager
 from app.ha_mqtt import HomeAssistantMQTT
+from app.logger import setup_app_logging, log_or_print, is_running_as_service
 import signal
 import sys
 import time
 import threading
-import logging
 import os
 
-# Logging für M-Bus Library konfigurieren
-logging.getLogger('meterbus').setLevel(logging.WARNING)
-logging.getLogger('serial').setLevel(logging.WARNING)
+# Logging initialisieren
+setup_app_logging()
+
+# Zeige Modus an
+if is_running_as_service():
+    log_or_print("Starte im Service-Modus (Logging in logs/gateway.log)")
+else:
+    log_or_print("Starte im Konsolen-Modus (Ausgabe auf Console + Log-Datei)")
 
 # Globale Variablen für sauberes Shutdown
 shutdown_flag = False
@@ -23,32 +28,32 @@ mqtt_client = None  # Globale MQTT Client Referenz
 def signal_handler(signum, frame):
     """Signal-Handler für sauberes Shutdown bei Strg+C"""
     global shutdown_flag, mqtt_client
-    print("\n[INFO] Shutdown-Signal empfangen (Strg+C)...")
-    print("[INFO] Starte sauberes Herunterfahren...")
+    log_or_print("\nShutdown-Signal empfangen (Strg+C)...")
+    log_or_print("Starte sauberes Herunterfahren...")
     
     shutdown_flag = True
     
     # MQTT Client ordnungsgemäß trennen
     if mqtt_client:
         try:
-            print("[INFO] Trenne MQTT Verbindung...")
+            log_or_print("Trenne MQTT Verbindung...")
             mqtt_client.disconnect()
         except Exception as e:
-            print(f"[WARN] Fehler beim MQTT Disconnect: {e}")
+            log_or_print(f"Fehler beim MQTT Disconnect: {e}", 'warning')
     
     # Prozesse beenden
     for process in processes:
         try:
-            print(f"[INFO] Beende Prozess: {process.name}")
+            log_or_print(f"Beende Prozess: {process.name}")
             process.terminate()
             process.join(timeout=5)
             if process.is_alive():
-                print(f"[WARN] Prozess {process.name} antwortet nicht - erzwinge Beendigung")
+                log_or_print(f"Prozess {process.name} antwortet nicht - erzwinge Beendigung", 'warning')
                 process.kill()
         except Exception as e:
-            print(f"[WARN] Fehler beim Beenden von Prozess {process.name}: {e}")
+            log_or_print(f"Fehler beim Beenden von Prozess {process.name}: {e}", 'warning')
     
-    print("[INFO] Shutdown abgeschlossen")
+    log_or_print("Shutdown abgeschlossen")
     sys.exit(0)
 
 # Signal-Handler registrieren
@@ -74,11 +79,11 @@ def start_mbus_scanning():
     try:
         mbus_client.start(scan_interval_minutes=scan_interval)
     except KeyboardInterrupt:
-        print("[INFO] M-Bus Service beendet durch Benutzer")
+        log_or_print("M-Bus Service beendet durch Benutzer")
     except Exception as e:
-        print(f"[ERROR] Fehler im M-Bus Service: {e}")
+        log_or_print(f"Fehler im M-Bus Service: {e}", 'error')
     finally:
-        print("[INFO] M-Bus Service ordnungsgemäß beendet")
+        log_or_print("M-Bus Service ordnungsgemäß beendet")
 
 def start_gateway_monitoring():
     """Startet Gateway-Überwachung und regelmäßige Updates"""
@@ -92,7 +97,7 @@ def start_gateway_monitoring():
     thread_start_time = time.time()
     status_counter = 0
     
-    print(f"[INFO] Gateway-Monitoring gestartet um {time.strftime('%H:%M:%S')}")
+    log_or_print(f"Gateway-Monitoring gestartet um {time.strftime('%H:%M:%S')}")
     
     try:
         while not shutdown_flag:
@@ -105,7 +110,7 @@ def start_gateway_monitoring():
             
             # Debug: Uptime ausgeben (nur wenn Debug aktiviert)
             if enable_debug and uptime % 60 == 0:  # Jede Minute
-                print(f"[DEBUG] Gateway Uptime: {uptime} Sekunden ({uptime//60} Minuten)")
+                log_or_print(f"Gateway Uptime: {uptime} Sekunden ({uptime//60} Minuten)", 'debug')
             
             # Status nur alle 5 Minuten ausgeben (20 * 15 Sekunden)
             status_counter += 1
@@ -120,20 +125,20 @@ def start_gateway_monitoring():
                 time.sleep(1)
                 
     except KeyboardInterrupt:
-        print("[INFO] Gateway-Monitoring beendet durch Benutzer")
+        log_or_print("Gateway-Monitoring beendet durch Benutzer")
     except Exception as e:
-        print(f"[ERROR] Fehler im Gateway-Monitoring: {e}")
+        log_or_print(f"Fehler im Gateway-Monitoring: {e}", 'error')
     finally:
-        print("[INFO] Gateway-Monitoring ordnungsgemäß beendet")
+        log_or_print("Gateway-Monitoring ordnungsgemäß beendet")
 
 if __name__ == "__main__":
     try:
-        print("[INFO] Starte MBus Scanner mit Home Assistant MQTT Integration...")
+        log_or_print("Starte MBus Scanner mit Home Assistant MQTT Integration...")
         
         config = Config()
         
         # MQTT Client für Home Assistant initialisieren
-        print("[INFO] Initialisiere Home Assistant MQTT Client...")
+        log_or_print("Initialisiere Home Assistant MQTT Client...")
         mqtt_client = HomeAssistantMQTT(
             broker=config.data["mqtt_broker"],
             port=config.data["mqtt_port"],
@@ -147,10 +152,10 @@ if __name__ == "__main__":
         
         # MQTT Verbindung aufbauen
         if mqtt_client.connect():
-            print("[INFO] MQTT erfolgreich verbunden")
-            print("[INFO] MQTT State wird automatisch bei Datenänderungen veröffentlicht")
+            log_or_print("MQTT erfolgreich verbunden")
+            log_or_print("MQTT State wird automatisch bei Datenänderungen veröffentlicht")
         else:
-            print("[WARN] MQTT Verbindung fehlgeschlagen - fahre ohne MQTT fort")
+            log_or_print("MQTT Verbindung fehlgeschlagen - fahre ohne MQTT fort", 'warning')
         
         # M-Bus Client initialisieren  
         mbus_client = MBusClient(
@@ -160,11 +165,11 @@ if __name__ == "__main__":
             debug=config.data.get("enable_debug", False)
         )
         
-        print("[INFO] Alle Services gestartet:")
-        print("[INFO] - M-Bus Scanner: Scannt und liest M-Bus Geräte")
-        print("[INFO] - Gateway-Monitoring: Überwacht Gateway-Status")
-        print("[INFO] - Home Assistant MQTT: Auto-Discovery und State Publishing")
-        print("[INFO] Drücken Sie Strg+C für sauberes Herunterfahren")
+        log_or_print("Alle Services gestartet:")
+        log_or_print("- M-Bus Scanner: Scannt und liest M-Bus Geräte")
+        log_or_print("- Gateway-Monitoring: Überwacht Gateway-Status")
+        log_or_print("- Home Assistant MQTT: Auto-Discovery und State Publishing")
+        log_or_print("Drücken Sie Strg+C für sauberes Herunterfahren")
         
         # Gateway-Monitoring in separatem Thread
         gateway_thread = threading.Thread(target=start_gateway_monitoring, name="Gateway-Monitoring", daemon=True)
@@ -175,12 +180,12 @@ if __name__ == "__main__":
         enabled_devices = [d for d in known_devices if d.get('enabled', True)]
         
         if enabled_devices:
-            print(f"[INFO] Gefunden: {len(enabled_devices)} aktivierte Geräte in Config")
+            log_or_print(f"Gefunden: {len(enabled_devices)} aktivierte Geräte in Config")
             
             # CLI Tool Setup
             use_cli_v2 = config.data.get('use_cli_v2', True)
             cli_tool = "mbus_cli_original.py" if use_cli_v2 else "mbus_cli_simple.py"
-            print(f"[INFO] Verwende CLI Tool: {cli_tool}")
+            log_or_print(f"Verwende CLI Tool: {cli_tool}")
             
             # Starte Reading-Loop für bekannte Geräte in separatem Thread
             def read_known_devices():
@@ -188,8 +193,8 @@ if __name__ == "__main__":
                 import json
                 
                 reading_interval = config.data.get("reading_interval_minutes", 1) * 60  # in Sekunden
-                print(f"[INFO] Reading-Intervall: {reading_interval} Sekunden")
-                print(f"[INFO] Starte Reading-Loop für bekannte Geräte...")
+                log_or_print(f"Reading-Intervall: {reading_interval} Sekunden")
+                log_or_print("Starte Reading-Loop für bekannte Geräte...")
                 
                 last_read_time = 0
                 while not shutdown_flag:
@@ -197,7 +202,7 @@ if __name__ == "__main__":
                     
                     # Prüfe ob Reading-Intervall abgelaufen ist
                     if current_time - last_read_time >= reading_interval:
-                        print(f"[READ] Starte Datenlesung für {len(enabled_devices)} Geräte...")
+                        log_or_print(f"Starte Datenlesung für {len(enabled_devices)} Geräte...")
                         
                         devices_read = 0
                         for device in enabled_devices:
@@ -209,7 +214,7 @@ if __name__ == "__main__":
                             baudrate = device.get('baudrate', config.data.get('mbus_baudrate', 9600))
                             
                             try:
-                                print(f"[READ] Lese {device_name} (Adresse {address})...")
+                                log_or_print(f"Lese {device_name} (Adresse {address})...", 'debug')
                                 
                                 cli_args = [
                                     sys.executable, cli_tool,
@@ -252,25 +257,25 @@ if __name__ == "__main__":
                                                 device_manager.update_mbus_device_data(address, normalized_data)
                                                 
                                                 record_count = len(normalized_data['records'])
-                                                print(f"[READ] {device_name}: ✅ {record_count} Messwerte")
+                                                log_or_print(f"{device_name}: [OK] {record_count} Messwerte")
                                                 devices_read += 1
                                             else:
-                                                print(f"[READ] {device_name}: ❌ Keine Records gefunden")
+                                                log_or_print(f"{device_name}: [FAIL] Keine Records gefunden", 'warning')
                                         else:
-                                            print(f"[READ] {device_name}: ❌ CLI erfolglos")
+                                            log_or_print(f"{device_name}: [FAIL] CLI erfolglos", 'warning')
                                     except json.JSONDecodeError as e:
-                                        print(f"[READ] {device_name}: ❌ JSON Parse Fehler: {e}")
+                                        log_or_print(f"{device_name}: [ERROR] JSON Parse Fehler: {e}", 'error')
                                 else:
-                                    print(f"[READ] {device_name}: ❌ CLI Fehler (Exit: {result.returncode})")
+                                    log_or_print(f"{device_name}: [ERROR] CLI Fehler (Exit: {result.returncode})", 'error')
                                     if result.stderr:
-                                        print(f"[READ] STDERR: {result.stderr[:200]}")
+                                        log_or_print(f"STDERR: {result.stderr[:200]}", 'error')
                                 
                             except subprocess.TimeoutExpired:
-                                print(f"[READ] {device_name}: ❌ Timeout (15s)")
+                                log_or_print(f"{device_name}: [ERROR] Timeout (15s)", 'error')
                             except Exception as e:
-                                print(f"[READ] {device_name}: ❌ Fehler: {e}")
+                                log_or_print(f"{device_name}: [ERROR] Fehler: {e}", 'error')
                         
-                        print(f"[READ] Zyklus abgeschlossen: {devices_read}/{len(enabled_devices)} erfolgreich")
+                        log_or_print(f"Zyklus abgeschlossen: {devices_read}/{len(enabled_devices)} erfolgreich")
                         last_read_time = current_time
                     
                     # Warte kurz vor nächster Prüfung
@@ -280,7 +285,7 @@ if __name__ == "__main__":
             reading_thread = threading.Thread(target=read_known_devices, name="Known-Devices-Reading", daemon=True)
             reading_thread.start()
         else:
-            print("[INFO] Keine aktivierten Geräte in Config gefunden")
+            log_or_print("Keine aktivierten Geräte in Config gefunden")
         
         # M-Bus Scanning im Hintergrund-Thread (nur wenn Discovery aktiviert)
         enable_discovery = config.data.get("enable_discovery", True)
@@ -288,10 +293,10 @@ if __name__ == "__main__":
             scan_interval = config.data.get("mbus_scan_interval_minutes", 60)
             mbus_thread = threading.Thread(target=lambda: mbus_client.start(scan_interval_minutes=scan_interval), name="M-Bus-Scanning", daemon=True)
             mbus_thread.start()
-            print(f"[INFO] M-Bus Discovery aktiviert - Scan alle {scan_interval} Minuten im Hintergrund")
+            log_or_print(f"M-Bus Discovery aktiviert - Scan alle {scan_interval} Minuten im Hintergrund")
         
         # Warte auf Shutdown-Signal
-        print("[INFO] Warte auf Shutdown-Signal...")
+        log_or_print("Warte auf Shutdown-Signal...")
         try:
             while not shutdown_flag:
                 time.sleep(1)
@@ -299,8 +304,8 @@ if __name__ == "__main__":
             pass
         
     except KeyboardInterrupt:
-        print("[INFO] Programm beendet durch Benutzer")
+        log_or_print("Programm beendet durch Benutzer")
     except Exception as e:
-        print(f"[ERROR] Unerwarteter Fehler: {e}")
+        log_or_print(f"Unerwarteter Fehler: {e}", 'error')
     finally:
-        print("[INFO] Programm ordnungsgemäß beendet")
+        log_or_print("Programm ordnungsgemäß beendet")
